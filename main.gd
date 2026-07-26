@@ -10,6 +10,7 @@ var counter_window: float = 0.35
 var camera_distance: float = 8.0
 var windup_color_amount: float = 1.0
 var windup_lean_amount: float = 1.0
+var seed_value: int = 20260726     # RNG seed for the A/B order + idle jitter; hot-reloadable
 
 # ---- hardcoded knobs (deliberately NOT in tuning.json) ----
 const IDLE_MIN := 0.6            # idle-gap jitter range (seconds)
@@ -25,6 +26,9 @@ const LUNGE_Z := 1.4             # how far forward the strike travels
 const WINDUP_STEP_BACK := 0.4    # how far the enemy coils back during the windup
 const WINDUP_LEAN := -0.45       # rear back: -X rot tilts the capsule top away from the player
 const STRIKE_LEAN := 0.5         # whip forward on the lunge
+const CROUCH_SQUASH := 0.30      # attack B: how far the enemy squashes down during windup
+const CROUCH_TIP_FWD := 0.25     # attack B: forward tip (+X rot) as it coils low
+const CROUCH_WIDEN := 0.15       # attack B: lateral widen as it squashes (planted, low stance)
 const COLOR_ENEMY := Color(0.80, 0.15, 0.12)   # red idle
 const COLOR_WARN := Color(1.00, 0.82, 0.05)    # warning yellow (telegraph)
 const COLOR_STRIKE := Color(0.95, 0.10, 0.05)  # aggressive red on commit
@@ -32,7 +36,9 @@ const COLOR_PLAYER := Color(0.15, 0.35, 0.85)  # blue
 const COLOR_STAGGER := Color(0.32, 0.30, 0.33) # dimmed on a successful counter
 
 enum State { IDLE, WINDUP, STRIKE, RECOVERY }
+enum AttackType { A, B }
 var state: int = State.IDLE
+var attack: int                      # which attack this cycle telegraphs (A rears back, B crouches)
 var state_time: float = 0.0
 var idle_gap: float = 1.0
 var counter_spent: bool = false     # one counter attempt per cycle
@@ -40,6 +46,8 @@ var result_text: String = "watching"
 var flash: float = 0.0
 var rec_start_pos: Vector3 = ENEMY_BASE
 var rec_start_rot: float = 0.0
+var rec_start_scale: Vector3 = Vector3.ONE
+var rng := RandomNumberGenerator.new()   # seeded in _load_tuning -> reproducible A/B order + jitter
 
 var enemy_root: Node3D
 var enemy_mat: StandardMaterial3D
@@ -53,7 +61,6 @@ var flash_rect: ColorRect
 
 
 func _ready() -> void:
-	randomize()
 	_load_tuning()
 	_build_world()
 	_build_hud()
@@ -66,23 +73,25 @@ func _ready() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_SPACE:
-			_try_counter()
+			_try_counter(AttackType.A)
+		elif event.keycode == KEY_K:
+			_try_counter(AttackType.B)
 		elif event.keycode == KEY_R:
 			_load_tuning()
 			_apply_camera()
 			_update_info_label()
 
 
-func _try_counter() -> void:
+func _try_counter(pressed_for: int) -> void:
 	if counter_spent:
 		return
 	if state == State.WINDUP:
 		counter_spent = true
 		# window = [telegraph_length - w, telegraph_length] of windup-elapsed time.
 		var w: float = minf(counter_window, telegraph_length)   # clamp: at most the whole windup
-		if state_time >= telegraph_length - w:
+		if pressed_for == attack and state_time >= telegraph_length - w:
 			_win()
-		# else: too early -> attempt spent, the strike still commits and lands -> LOSE
+		# else: wrong attack OR too early -> attempt spent, the strike commits and lands -> LOSE
 	elif state == State.STRIKE:
 		counter_spent = true   # too late; the strike is already committed
 	# IDLE / RECOVERY presses are ignored: nothing has telegraphed yet this cycle.
@@ -101,15 +110,35 @@ func _process(delta: float) -> void:
 				_enter_windup()
 		State.WINDUP:
 			var p: float = clamp(state_time / telegraph_length, 0.0, 1.0)
-			enemy_root.rotation.x = lerp(0.0, WINDUP_LEAN * windup_lean_amount, p)
-			enemy_root.position = ENEMY_BASE + Vector3(0.0, 0.0, -WINDUP_STEP_BACK * windup_lean_amount * p)
+			var lean := windup_lean_amount
+			if attack == AttackType.A:
+				# A: rear back and tilt away (top tips back), coiling for a lunge.
+				enemy_root.scale = Vector3.ONE
+				enemy_root.rotation.x = lerp(0.0, WINDUP_LEAN * lean, p)
+				enemy_root.position = ENEMY_BASE + Vector3(0.0, 0.0, -WINDUP_STEP_BACK * lean * p)
+			else:
+				# B: crouch low in place -> squash down, tip forward, widen (feet stay planted at y=0).
+				enemy_root.position = ENEMY_BASE
+				enemy_root.rotation.x = lerp(0.0, CROUCH_TIP_FWD * lean, p)
+				var sy := maxf(0.15, 1.0 - CROUCH_SQUASH * lean * p)
+				enemy_root.scale = Vector3(1.0 + CROUCH_WIDEN * lean * p, sy, 1.0 + CROUCH_WIDEN * lean * p)
 			enemy_mat.albedo_color = COLOR_ENEMY.lerp(COLOR_WARN, p * windup_color_amount)
 			if state_time >= telegraph_length:
 				_enter_strike()
 		State.STRIKE:
 			var q: float = ease(clamp(state_time / STRIKE_DURATION, 0.0, 1.0), 0.35)
-			enemy_root.rotation.x = lerp(WINDUP_LEAN * windup_lean_amount, STRIKE_LEAN, q)
-			enemy_root.position = Vector3(0.0, 0.0, lerp(ENEMY_BASE.z - WINDUP_STEP_BACK * windup_lean_amount, LUNGE_Z, q))
+			var lean := windup_lean_amount
+			if attack == AttackType.A:
+				enemy_root.rotation.x = lerp(WINDUP_LEAN * lean, STRIKE_LEAN, q)
+				enemy_root.position = Vector3(0.0, 0.0, lerp(ENEMY_BASE.z - WINDUP_STEP_BACK * lean, LUNGE_Z, q))
+				enemy_root.scale = Vector3.ONE
+			else:
+				# spring up out of the crouch while lunging forward from ENEMY_BASE.
+				enemy_root.rotation.x = lerp(CROUCH_TIP_FWD * lean, STRIKE_LEAN, q)
+				enemy_root.position = Vector3(0.0, 0.0, lerp(ENEMY_BASE.z, LUNGE_Z, q))
+				var sy0 := maxf(0.15, 1.0 - CROUCH_SQUASH * lean)
+				var wx := 1.0 + CROUCH_WIDEN * lean
+				enemy_root.scale = Vector3(lerp(wx, 1.0, q), lerp(sy0, 1.0, q), lerp(wx, 1.0, q))
 			enemy_mat.albedo_color = COLOR_STRIKE
 			if state_time >= STRIKE_DURATION:
 				_lose()
@@ -117,6 +146,7 @@ func _process(delta: float) -> void:
 			var r: float = clamp(state_time / RECOVERY_TIME, 0.0, 1.0)
 			enemy_root.position = rec_start_pos.lerp(ENEMY_BASE, r)
 			enemy_root.rotation.x = lerp(rec_start_rot, 0.0, r)
+			enemy_root.scale = rec_start_scale.lerp(Vector3.ONE, r)
 			if state_time >= RECOVERY_TIME:
 				_enter_idle()
 
@@ -124,16 +154,18 @@ func _process(delta: float) -> void:
 func _enter_idle() -> void:
 	state = State.IDLE
 	state_time = 0.0
-	idle_gap = randf_range(IDLE_MIN, IDLE_MAX)
+	idle_gap = rng.randf_range(IDLE_MIN, IDLE_MAX)
 	counter_spent = false
 	result_text = "watching"
 	enemy_mat.albedo_color = COLOR_ENEMY
 	enemy_root.position = ENEMY_BASE
 	enemy_root.rotation.x = 0.0
+	enemy_root.scale = Vector3.ONE
 	_update_result_label()
 
 
 func _enter_windup() -> void:
+	attack = AttackType.A if rng.randf() < 0.5 else AttackType.B
 	state = State.WINDUP
 	state_time = 0.0
 	if windup_player.stream != null:
@@ -154,7 +186,9 @@ func _enter_recovery(text: String) -> void:
 	state_time = 0.0
 	rec_start_pos = enemy_root.position
 	rec_start_rot = enemy_root.rotation.x
-	result_text = text
+	rec_start_scale = enemy_root.scale
+	# reveal the ground-truth attack letter ONLY now (recovery); idle/windup stay "watching".
+	result_text = "%s  (%s)" % [text, ("A" if attack == AttackType.A else "B")]
 	_update_result_label()
 
 
@@ -191,6 +225,8 @@ func _load_tuning() -> void:
 	camera_distance = 8.0
 	windup_color_amount = 1.0
 	windup_lean_amount = 1.0
+	seed_value = 20260726
+	rng.seed = seed_value   # deterministic even on the missing/bad-file fallback path
 	if not FileAccess.file_exists("res://tuning.json"):
 		return
 	var f := FileAccess.open("res://tuning.json", FileAccess.READ)
@@ -206,6 +242,8 @@ func _load_tuning() -> void:
 	camera_distance = _num(data, "camera_distance", camera_distance)
 	windup_color_amount = clampf(_num(data, "windup_color_amount", windup_color_amount), 0.0, 1.0)
 	windup_lean_amount = maxf(0.0, _num(data, "windup_lean_amount", windup_lean_amount))
+	seed_value = int(_num(data, "seed", float(seed_value)))
+	rng.seed = seed_value
 
 
 func _num(d: Dictionary, key: String, fallback: float) -> float:
@@ -375,16 +413,16 @@ func _build_hud() -> void:
 
 func _update_result_label() -> void:
 	result_label.text = result_text
-	match result_text:
-		"WIN":
-			result_label.modulate = Color(0.4, 1.0, 0.5)
-		"LOSE":
-			result_label.modulate = Color(1.0, 0.4, 0.35)
-		_:
-			result_label.modulate = Color(0.85, 0.85, 0.9)
+	# text now carries a "  (A/B)" suffix in recovery, so match on the prefix.
+	if result_text.begins_with("WIN"):
+		result_label.modulate = Color(0.4, 1.0, 0.5)
+	elif result_text.begins_with("LOSE"):
+		result_label.modulate = Color(1.0, 0.4, 0.35)
+	else:
+		result_label.modulate = Color(0.85, 0.85, 0.9)
 
 
 func _update_info_label() -> void:
 	var w: float = minf(counter_window, telegraph_length)
 	var opens: float = telegraph_length - w
-	info_label.text = "telegraph_length: %.2f s\ncounter_window:  %.2f s\ncamera_distance: %.1f\nwindup_color_amount: %.2f\nwindup_lean_amount:  %.2f\ncounter window: %.2f-%.2f s of windup\nSPACE = counter    R = reload tuning" % [telegraph_length, counter_window, camera_distance, windup_color_amount, windup_lean_amount, opens, telegraph_length]
+	info_label.text = "telegraph_length: %.2f s\ncounter_window:  %.2f s\ncamera_distance: %.1f\nwindup_color_amount: %.2f\nwindup_lean_amount:  %.2f\nseed: %d\ncounter window: %.2f-%.2f s of windup\nSPACE = counter A   K = counter B   R = reload" % [telegraph_length, counter_window, camera_distance, windup_color_amount, windup_lean_amount, seed_value, opens, telegraph_length]
