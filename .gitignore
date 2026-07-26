@@ -3,3 +3,7 @@
 /android/
 /descent/
 /videos/
+
+# not prototype source: screen captures + Claude runtime state
+*.mp4
+.claude/scheduled_tasks.lock
