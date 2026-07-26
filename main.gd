@@ -137,6 +137,9 @@ func _enter_windup() -> void:
 	state = State.WINDUP
 	state_time = 0.0
 	if windup_player.stream != null:
+		var base_len: float = windup_player.stream.get_length()
+		if base_len > 0.0 and telegraph_length > 0.0:
+			windup_player.pitch_scale = base_len / telegraph_length
 		windup_player.play()
 
 

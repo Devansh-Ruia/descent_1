@@ -22,6 +22,13 @@ tone plays (the tell), then lunges. Counter during the tell's tail = WIN
 (flash + label). Mistime it or do nothing = the strike lands (thud) = LOSE.
 After each result it auto-resets so you can practice.
 
+The wind-up cue now scales to `telegraph_length`: the fixed `windup.wav` is
+played back stretched (via `pitch_scale`) so the rising tone spans the whole
+wind-up and its peak lands on the strike commit at any length. Tradeoff:
+`pitch_scale` also lowers the pitch at longer telegraphs, so the cue drifts
+deeper as `telegraph_length` grows. Switch to in-engine synthesis if that drift
+is ever unwanted.
+
 ## Tuning
 
 Edit `tuning.json` at the repo root. Exactly five keys, all numbers:
