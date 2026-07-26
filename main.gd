@@ -361,9 +361,9 @@ func _build_hud() -> void:
 
 	info_label = Label.new()
 	info_label.add_theme_font_size_override("font_size", 18)
-	info_label.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	info_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
 	info_label.offset_left = 16
-	info_label.offset_bottom = -12
+	info_label.offset_top = 12
 	info_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(info_label)
 
