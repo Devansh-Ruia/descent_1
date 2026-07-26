@@ -8,6 +8,8 @@ extends Node3D
 var telegraph_length: float = 1.2
 var counter_window: float = 0.35
 var camera_distance: float = 8.0
+var windup_color_amount: float = 1.0
+var windup_lean_amount: float = 1.0
 
 # ---- hardcoded knobs (deliberately NOT in tuning.json) ----
 const IDLE_MIN := 0.6            # idle-gap jitter range (seconds)
@@ -99,15 +101,15 @@ func _process(delta: float) -> void:
 				_enter_windup()
 		State.WINDUP:
 			var p: float = clamp(state_time / telegraph_length, 0.0, 1.0)
-			enemy_root.rotation.x = lerp(0.0, WINDUP_LEAN, p)
-			enemy_root.position = ENEMY_BASE + Vector3(0.0, 0.0, -WINDUP_STEP_BACK * p)
-			enemy_mat.albedo_color = COLOR_ENEMY.lerp(COLOR_WARN, p)
+			enemy_root.rotation.x = lerp(0.0, WINDUP_LEAN * windup_lean_amount, p)
+			enemy_root.position = ENEMY_BASE + Vector3(0.0, 0.0, -WINDUP_STEP_BACK * windup_lean_amount * p)
+			enemy_mat.albedo_color = COLOR_ENEMY.lerp(COLOR_WARN, p * windup_color_amount)
 			if state_time >= telegraph_length:
 				_enter_strike()
 		State.STRIKE:
 			var q: float = ease(clamp(state_time / STRIKE_DURATION, 0.0, 1.0), 0.35)
-			enemy_root.rotation.x = lerp(WINDUP_LEAN, STRIKE_LEAN, q)
-			enemy_root.position = Vector3(0.0, 0.0, lerp(ENEMY_BASE.z - WINDUP_STEP_BACK, LUNGE_Z, q))
+			enemy_root.rotation.x = lerp(WINDUP_LEAN * windup_lean_amount, STRIKE_LEAN, q)
+			enemy_root.position = Vector3(0.0, 0.0, lerp(ENEMY_BASE.z - WINDUP_STEP_BACK * windup_lean_amount, LUNGE_Z, q))
 			enemy_mat.albedo_color = COLOR_STRIKE
 			if state_time >= STRIKE_DURATION:
 				_lose()
@@ -184,6 +186,8 @@ func _load_tuning() -> void:
 	telegraph_length = 1.2
 	counter_window = 0.35
 	camera_distance = 8.0
+	windup_color_amount = 1.0
+	windup_lean_amount = 1.0
 	if not FileAccess.file_exists("res://tuning.json"):
 		return
 	var f := FileAccess.open("res://tuning.json", FileAccess.READ)
@@ -197,6 +201,8 @@ func _load_tuning() -> void:
 	telegraph_length = _num(data, "telegraph_length", telegraph_length)
 	counter_window = _num(data, "counter_window", counter_window)
 	camera_distance = _num(data, "camera_distance", camera_distance)
+	windup_color_amount = clampf(_num(data, "windup_color_amount", windup_color_amount), 0.0, 1.0)
+	windup_lean_amount = maxf(0.0, _num(data, "windup_lean_amount", windup_lean_amount))
 
 
 func _num(d: Dictionary, key: String, fallback: float) -> float:
@@ -329,9 +335,9 @@ func _first_mesh_instance(node: Node) -> MeshInstance3D:
 
 
 func _load_audio(path: String) -> AudioStream:
-	if not ResourceLoader.exists(path):
+	if not FileAccess.file_exists(path):
 		return null
-	return load(path) as AudioStream
+	return AudioStreamWAV.load_from_file(path)
 
 
 # ---------- HUD ----------
@@ -378,4 +384,4 @@ func _update_result_label() -> void:
 func _update_info_label() -> void:
 	var w: float = minf(counter_window, telegraph_length)
 	var opens: float = telegraph_length - w
-	info_label.text = "telegraph_length: %.2f s\ncounter_window:  %.2f s\ncamera_distance: %.1f\ncounter window: %.2f-%.2f s of windup\nSPACE = counter    R = reload tuning" % [telegraph_length, counter_window, camera_distance, opens, telegraph_length]
+	info_label.text = "telegraph_length: %.2f s\ncounter_window:  %.2f s\ncamera_distance: %.1f\nwindup_color_amount: %.2f\nwindup_lean_amount:  %.2f\ncounter window: %.2f-%.2f s of windup\nSPACE = counter    R = reload tuning" % [telegraph_length, counter_window, camera_distance, windup_color_amount, windup_lean_amount, opens, telegraph_length]

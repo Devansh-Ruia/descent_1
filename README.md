@@ -9,7 +9,9 @@ telegraphs one attack, and one counter. You are judging two things:
 ## How to run
 
 1. Open this folder as a project in **Godot 4.7** (Project Manager -> Import ->
-   pick `project.godot`). First open imports the `.glb`/`.wav` assets.
+   pick `project.godot`). First open imports the `.glb` assets. The `.wav`
+   audio now loads at runtime (`AudioStreamWAV.load_from_file`), so it needs no
+   import step.
 2. Press **F5** (Play). The main scene is `main.tscn`.
 3. Controls:
    - **SPACE** - counter. Press it inside the tail of the wind-up.
@@ -22,13 +24,15 @@ After each result it auto-resets so you can practice.
 
 ## Tuning
 
-Edit `tuning.json` at the repo root. Exactly three keys, all numbers:
+Edit `tuning.json` at the repo root. Exactly five keys, all numbers:
 
 ```json
 {
   "telegraph_length": 1.2,
   "counter_window": 0.35,
-  "camera_distance": 8.0
+  "camera_distance": 8.0,
+  "windup_color_amount": 1.0,
+  "windup_lean_amount": 1.0
 }
 ```
 
@@ -41,13 +45,38 @@ Edit `tuning.json` at the repo root. Exactly three keys, all numbers:
   whole wind-up.
 - `camera_distance` - world units from the arena center along the fixed 3/4
   camera direction.
+- `windup_color_amount` - float `0.0..1.0`, scales the red->orange color shift
+  during the wind-up. `1.0` = the full shift, `0.0` = no color change at all.
+  Values outside the range are clamped.
+- `windup_lean_amount` - float `>= 0`, multiplies how far the enemy coils and
+  leans back during the wind-up. `1.0` = current, higher = more exaggerated,
+  `0.0` = no pose change. The strike lunge starts from this scaled pose, so
+  there is no pop when you change it.
 
-Save the file, then press **R** in-game to apply all three live. The HUD shows
+Both `windup_*` keys default to `1.0`, which is a no-op: leave them alone and
+the wind-up looks exactly as before.
+
+Save the file, then press **R** in-game to apply all five live. The HUD shows
 the current values and the resolved window. Missing file or a bad/missing key
-falls back to sane defaults (1.2 / 0.35 / 8.0) and keeps running.
+falls back to sane defaults (1.2 / 0.35 / 8.0 / 1.0 / 1.0) and keeps running.
+
+### Experiment: does the wind-up read on pose alone?
+
+To test whether the tell survives without color, set `windup_color_amount` to
+`0.0` and `windup_lean_amount` to about `2.0`-`3.0`, save, press **R**, and
+play. If the wind-up is still readable with no color change, the pose is
+carrying the tell. If it stops reading, the tell was leaning on color.
 
 Every other constant (idle jitter, strike speed, recovery time, colors, camera
 angle) is hardcoded in `main.gd`, on purpose.
+
+## Verification
+
+The machine these fixes were written on has no Godot binary, so the audio fix
+is reviewed against Godot 4 conventions, not runtime-confirmed. Verify it by
+hand: run the project with sound on and confirm the wind-up cue fires during
+the wind-up and the hit cue fires on the loss. Then run the pose experiment
+above.
 
 ## Regenerating assets
 

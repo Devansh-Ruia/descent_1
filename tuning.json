@@ -1,5 +1,7 @@
 {
   "telegraph_length": 1.2,
   "counter_window": 0.35,
-  "camera_distance": 8.0
+  "camera_distance": 8.0,
+  "windup_color_amount": 1.0,
+  "windup_lean_amount": 1.0
 }
