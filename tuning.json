@@ -1,7 +1,7 @@
 {
-  "telegraph_length": 1.2,
-  "counter_window": 0.35,
-  "camera_distance": 8.0,
-  "windup_color_amount": 1.0,
-  "windup_lean_amount": 1.0
+  "telegraph_length": 2.2,
+  "counter_window": 1.35,
+  "camera_distance": 9.0,
+  "windup_color_amount": 2.0,
+  "windup_lean_amount": 2.0
 }
