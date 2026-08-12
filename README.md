@@ -73,17 +73,26 @@ pattern: it does not learn, adapt, or read you.
   neither, so it cannot be misread as a wind-up. It snaps into the pose in about
   0.12 s and animates back down over the last 0.2 s of the pose, so both the
   entry and the exit are visible events.
+- **The retaliation.** The pose does not return to idle. It goes **straight into
+  a wind-up**, so getting hit buys the enemy a turn. At the shipped values the
+  sequence after your hit is fixed: 0.9 s of rising and trembling, then a 0.72 s
+  wind-up, so the strike commits 1.62 s after you connect and the counter window
+  is `[1.27, 1.62]`. No idle gap and no jitter, because the whole point is that
+  you can learn this timing.
 - **The effect.** An attack that *begins* while the rage window is open telegraphs
   at `telegraph_length * vengeful_telegraph_multiplier` (default 0.6, so 1.2 s
   becomes 0.72 s). The **counter window keeps its size**: it is still
   `counter_window` seconds, still anchored to the tail of the wind-up. You get
   less time to read, not less time to press.
 - **Cancel.** A hit landed during a wind-up **cancels that attack**. The cue
-  stops, no strike commits, and the enemy goes into the vengeful pose instead.
-  Punishing a wind-up works, and it is exactly what makes the next one faster.
-- **Expiry.** The pose is a short beat. The rage window keeps running underneath
-  it and can expire while the enemy is idling, in which case the next attack
-  telegraphs at normal length. The HUD prints `VENGEFUL` with the seconds left.
+  stops and no strike commits from it. This is not a free reset: the enemy rises
+  into the pose and then throws a fresh, faster attack with a newly rolled A or
+  B. Punishing a wind-up works, and it is exactly what makes the next one faster.
+- **Expiry.** The rage window runs underneath all of this. After a retaliation
+  cycle it usually runs out during the enemy's recovery, so once the loop
+  settles back to idle the next attack telegraphs at normal length. Raise
+  `vengeful_duration` past a full cycle and it will still be armed when the
+  enemy comes back around. The HUD prints `VENGEFUL` with the seconds left.
 
 Counters are ignored during the vengeful pose, the same as during idle and
 recovery, because nothing is telegraphing.
@@ -142,7 +151,9 @@ tenth (`seed`):
   hardcoded), or you can swing faster than the enemy can recover and it never
   gets a turn. `1.0` is the shipped value for that reason.
 - `vengeful_duration` - float `>= 0`, seconds the rage window stays open after a
-  landed hit. `0.0` turns the trait off apart from the wind-up cancel.
+  landed hit. It also caps the pose, which is otherwise 0.9 s. At `0.0` the pose
+  is skipped entirely and the enemy retaliates immediately at full telegraph
+  length, which is a degenerate setting, not an off switch.
 - `vengeful_telegraph_multiplier` - float in `(0.0, 1.0]`, what the telegraph is
   multiplied by while vengeful. `1.0` = no speed-up, `0.6` = the wind-up is 40%
   shorter. Clamped to `0.05` at the bottom, never `0`, because it divides the
@@ -184,13 +195,23 @@ they blur together, the tell was leaning on color.
 
 ### Experiment: is "stop attacking" an interesting decision?
 
-This is the question Phase 2 exists to answer. Every hit you land makes the enemy
-harder to read for the next few seconds, and every swing you throw leaves you
-undefended while you throw it. So there is a case for not attacking: stand off,
-counter cleanly, stay alive. And there is a case against it, which is that the
-enemy has 3 HP and you cannot win by standing still.
+This is the question Phase 2 exists to answer, and at the shipped values it comes
+down to arithmetic you can do at the keyboard.
 
-Play a few fights and judge by hand:
+Land a hit at `t = 0`. The enemy rises for 0.9 s and its retaliation commits at
+1.62 s, with the counter window open from 1.27 s. Your own recovery ends at
+1.0 s. So at 1.0 s you have a real choice, and it is not close to free either
+way:
+
+- **Hold back.** You are free at 1.0 s, well before the window opens at 1.27 s.
+  Read A or B off the short wind-up, press the right counter, and you win the
+  cycle without taking a hit.
+- **Swing again.** You land a second hit and go into recovery until 2.0 s. The
+  retaliation commits at 1.62 s, while you are still locked out. It hits you and
+  you die.
+
+That is the dilemma stated in seconds. There is no jitter in it, so which way it
+goes is your read, not the RNG. Play a few fights and judge by hand:
 
 1. Do you ever *choose* to hold back, or do you just attack whenever the enemy is
    not striking? If the answer is always attack, the cost is too cheap. Raise
@@ -207,10 +228,12 @@ Play a few fights and judge by hand:
    a free win is the thing to watch.
 
 The honest failure mode to look for: if the fastest way to win is to mash **J**
-from the opening, the decision does not exist. `player_attack_recovery` is what
-prevents that, since it gates the next swing as well as the counters, and at
-`1.0` three hits take at least two seconds of standing there undefended. If it
-still feels free, that number is too low.
+from the opening, the decision does not exist. Two things prevent that, and if it
+still feels free, one of them is mistuned. `player_attack_recovery` gates the next
+swing as well as the counters, so hits cannot be chained faster than 1.0 s. And
+the retaliation out of the vengeful pose means the second hit in a chain is
+answered at 1.62 s, inside the lockout the second hit bought. Mashing does not
+race the enemy any more, it feeds it.
 
 Every other constant (idle jitter, strike speed, recovery time, the vengeful pose
 length and shake, colors, camera angle) is hardcoded in `main.gd`, on purpose.
@@ -239,6 +262,13 @@ Phase 2 (player offense + Vengeful):
   always get back to idle and attack you, never be locked in place.
 - Hitting the enemy mid-wind-up cancels it: the tone stops, no strike lands, and
   it rises into the vengeful pose.
+- The pose leads straight into a wind-up with no idle pause, and that retaliation
+  is counterable. Land a hit, do nothing else, and confirm you can read A or B
+  off the short wind-up and counter it. If you cannot, the trait is a punishment
+  rather than a constraint.
+- Land a hit, immediately land a second, and confirm the retaliation reaches you
+  while you are still locked out. That failure should be legible as your choice,
+  not as the enemy cheating.
 - The vengeful pose is instantly distinct from both wind-ups. It should never
   bait you into pressing a counter.
 - The exit from the pose is animated, not a snap, and no vengeful stretch or

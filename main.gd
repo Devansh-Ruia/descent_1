@@ -219,7 +219,10 @@ func _process(delta: float) -> void:
 			enemy_root.position = shake.lerp(rec_start_pos, back)
 			enemy_root.rotation.x = lerp(0.0, rec_start_rot, back)
 			if state_time >= d:
-				_enter_idle()   # the rage window (vengeful_left) keeps running past the pose
+				# Straight into the wind-up, no idle gap: it rears up and comes back at you.
+				# Returning to IDLE made attacking free: IDLE_MIN alone outlasts the player's
+				# recovery, so under sustained attack the enemy never got to telegraph once.
+				_enter_windup()   # vengeful_left still has time on it, so this one telegraphs short
 
 	# knock-back from a landed player hit, drawn over whatever the state just posed.
 	# absolute set (not -=) so it cannot accumulate in IDLE, where nothing else writes position.
@@ -233,7 +236,6 @@ func _enter_idle() -> void:
 	state = State.IDLE
 	state_time = 0.0
 	idle_gap = rng.randf_range(IDLE_MIN, IDLE_MAX)
-	counter_spent = false
 	if enemy_hp_left <= 0:
 		_reset_fight()   # FIGHT WON held through recovery; refill so the human can keep testing
 	result_text = "watching"
@@ -262,6 +264,10 @@ func _enter_vengeful() -> void:
 
 func _enter_windup() -> void:
 	attack = AttackType.A if rng.randf() < 0.5 else AttackType.B
+	# One attempt per WIND-UP, reset here rather than in _enter_idle, because a wind-up is
+	# what a cycle is and there are now two ways in. Coming out of VENGEFUL the retaliation
+	# would otherwise inherit the attempt spent on the wind-up the player just cancelled.
+	counter_spent = false
 	# Locked once, here: the telegraph this cycle uses cannot shift mid-wind-up even if the
 	# rage window expires while the enemy is already coiling. telegraph_length stays the tuning value.
 	eff_telegraph = telegraph_length
