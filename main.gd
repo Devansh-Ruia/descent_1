@@ -12,7 +12,9 @@ var windup_color_amount: float = 1.0
 var windup_lean_amount: float = 1.0
 var enemy_hp: int = 3              # landed player hits needed to win the fight
 var player_attack_recovery: float = 0.45   # seconds your own swing leaves you unable to counter
-var seed_value: int = 20260726     # RNG seed for the A/B order + idle jitter; hot-reloadable
+var vengeful_duration: float = 2.5         # how long a hit keeps the enemy vengeful
+var vengeful_telegraph_multiplier: float = 0.6   # telegraph scale while vengeful; window size is untouched
+var seed_value: int = 0            # RNG seed for the A/B order + idle jitter; <= 0 = random per run
 
 # ---- hardcoded knobs (deliberately NOT in tuning.json) ----
 const IDLE_MIN := 0.6            # idle-gap jitter range (seconds)
@@ -33,13 +35,19 @@ const CROUCH_TIP_FWD := 0.25     # attack B: forward tip (+X rot) as it coils lo
 const CROUCH_WIDEN := 0.15       # attack B: lateral widen as it squashes (planted, low stance)
 const HIT_FLINCH_TIME := 0.18    # brief knock-back so a landed player hit reads (no new audio cue)
 const HIT_KNOCK := 0.35
+const VENGE_STRETCH := 0.35      # vengeful: rise tall (must not read like A's rear-back or B's crouch)
+const VENGE_SHAKE_AMP := 0.06    # vengeful: lateral tremor
+const VENGE_SHAKE_HZ := 22.0
+const VENGE_POSE_TIME := 0.9     # how long the rise-tall pose is held, capped by vengeful_duration
+const VENGE_RAMP_IN := 0.12      # snap up
+const VENGE_RAMP_OUT := 0.20     # settle back down, animated so the exit reads as an exit
 const COLOR_ENEMY := Color(0.80, 0.15, 0.12)   # red idle
 const COLOR_WARN := Color(1.00, 0.82, 0.05)    # warning yellow (telegraph)
 const COLOR_STRIKE := Color(0.95, 0.10, 0.05)  # aggressive red on commit
 const COLOR_PLAYER := Color(0.15, 0.35, 0.85)  # blue
 const COLOR_STAGGER := Color(0.32, 0.30, 0.33) # dimmed on a successful counter
 
-enum State { IDLE, WINDUP, STRIKE, RECOVERY }
+enum State { IDLE, WINDUP, STRIKE, RECOVERY, VENGEFUL }
 enum AttackType { A, B }
 var state: int = State.IDLE
 var attack: int                      # which attack this cycle telegraphs (A rears back, B crouches)
@@ -49,6 +57,8 @@ var counter_spent: bool = false     # one counter attempt per cycle
 var enemy_hp_left: int = 3          # refilled in _load_tuning and after a FIGHT WON
 var player_recovery_left: float = 0.0   # your own swing's recovery; blocks SPACE/K while > 0
 var hit_flinch: float = 0.0         # knock-back timer for a landed player hit
+var vengeful_left: float = 0.0      # rage window: an attack starting while > 0 telegraphs short
+var eff_telegraph: float = 1.2      # this cycle's telegraph, locked at _enter_windup so it cannot shift
 var result_text: String = "watching"
 var flash: float = 0.0
 var rec_start_pos: Vector3 = ENEMY_BASE
@@ -104,6 +114,10 @@ func _hit_enemy() -> void:
 	hit_flinch = HIT_FLINCH_TIME
 	if enemy_hp_left <= 0:
 		_win_fight()
+		return
+	# Vengeful: deterministic, every landed hit. No randomness, no pattern reading.
+	vengeful_left = vengeful_duration
+	_enter_vengeful()
 
 
 func _try_counter(pressed_for: int) -> void:
@@ -113,20 +127,22 @@ func _try_counter(pressed_for: int) -> void:
 		return
 	if state == State.WINDUP:
 		counter_spent = true
-		# window = [telegraph_length - w, telegraph_length] of windup-elapsed time.
-		var w: float = minf(counter_window, telegraph_length)   # clamp: at most the whole windup
-		if pressed_for == attack and state_time >= telegraph_length - w:
+		# window = [eff_telegraph - w, eff_telegraph] of windup-elapsed time. Vengeful shortens
+		# eff_telegraph, so the window opens later in wall-clock but keeps its size.
+		var w: float = minf(counter_window, eff_telegraph)   # clamp: at most the whole windup
+		if pressed_for == attack and state_time >= eff_telegraph - w:
 			_win()
 		# else: wrong attack OR too early -> attempt spent, the strike commits and lands -> LOSE
 	elif state == State.STRIKE:
 		counter_spent = true   # too late; the strike is already committed
-	# IDLE / RECOVERY presses are ignored: nothing has telegraphed yet this cycle.
+	# IDLE / RECOVERY / VENGEFUL presses are ignored: nothing has telegraphed yet this cycle.
 
 
 # ---------- state machine ----------
 func _process(delta: float) -> void:
 	state_time += delta
 	player_recovery_left = maxf(0.0, player_recovery_left - delta)
+	vengeful_left = maxf(0.0, vengeful_left - delta)   # runs in every state, so it can expire while idling
 	if flash > 0.0:
 		flash = max(0.0, flash - delta * 2.5)
 		flash_rect.color = Color(0.6, 1.0, 0.7, flash * 0.55)
@@ -136,7 +152,7 @@ func _process(delta: float) -> void:
 			if state_time >= idle_gap:
 				_enter_windup()
 		State.WINDUP:
-			var p: float = clamp(state_time / telegraph_length, 0.0, 1.0)
+			var p: float = clamp(state_time / eff_telegraph, 0.0, 1.0)
 			var lean := windup_lean_amount
 			if attack == AttackType.A:
 				# A: rear back and tilt away (top tips back), coiling for a lunge.
@@ -150,7 +166,7 @@ func _process(delta: float) -> void:
 				var sy := maxf(0.15, 1.0 - CROUCH_SQUASH * lean * p)
 				enemy_root.scale = Vector3(1.0 + CROUCH_WIDEN * lean * p, sy, 1.0 + CROUCH_WIDEN * lean * p)
 			enemy_mat.albedo_color = COLOR_ENEMY.lerp(COLOR_WARN, p * windup_color_amount)
-			if state_time >= telegraph_length:
+			if state_time >= eff_telegraph:
 				_enter_strike()
 		State.STRIKE:
 			var q: float = ease(clamp(state_time / STRIKE_DURATION, 0.0, 1.0), 0.35)
@@ -176,6 +192,16 @@ func _process(delta: float) -> void:
 			enemy_root.scale = rec_start_scale.lerp(Vector3.ONE, r)
 			if state_time >= RECOVERY_TIME:
 				_enter_idle()
+		State.VENGEFUL:
+			# rise tall + tremor. Deliberately unlike A (rears back, tips away) and B (crouches
+			# low): straight up, no rotation, so it cannot be mistaken for either wind-up.
+			var d: float = minf(VENGE_POSE_TIME, vengeful_duration)
+			var e: float = clampf(minf(state_time / VENGE_RAMP_IN, (d - state_time) / VENGE_RAMP_OUT), 0.0, 1.0)
+			enemy_root.scale = Vector3(1.0 - 0.10 * e, 1.0 + VENGE_STRETCH * e, 1.0 - 0.10 * e)
+			enemy_root.position = ENEMY_BASE + Vector3(sin(state_time * TAU * VENGE_SHAKE_HZ) * VENGE_SHAKE_AMP * e, 0.0, 0.0)
+			enemy_root.rotation.x = 0.0
+			if state_time >= d:
+				_enter_idle()   # the rage window (vengeful_left) keeps running past the pose
 
 	# knock-back from a landed player hit, drawn over whatever the state just posed.
 	# absolute set (not -=) so it cannot accumulate in IDLE, where nothing else writes position.
@@ -200,14 +226,30 @@ func _enter_idle() -> void:
 	_update_result_label()
 
 
+func _enter_vengeful() -> void:
+	# A hit during a wind-up CANCELS that attack: the cue stops and no strike commits this cycle.
+	# From IDLE / RECOVERY / VENGEFUL this just (re)starts the pose. Same call either way.
+	windup_player.stop()
+	state = State.VENGEFUL
+	state_time = 0.0
+	enemy_mat.albedo_color = COLOR_ENEMY   # drop any telegraph tint from the cancelled wind-up
+	result_text = "watching"
+	_update_result_label()
+
+
 func _enter_windup() -> void:
 	attack = AttackType.A if rng.randf() < 0.5 else AttackType.B
+	# Locked once, here: the telegraph this cycle uses cannot shift mid-wind-up even if the
+	# rage window expires while the enemy is already coiling. telegraph_length stays the tuning value.
+	eff_telegraph = telegraph_length
+	if vengeful_left > 0.0:
+		eff_telegraph = telegraph_length * vengeful_telegraph_multiplier
 	state = State.WINDUP
 	state_time = 0.0
 	if windup_player.stream != null:
 		var base_len: float = windup_player.stream.get_length()
-		if base_len > 0.0 and telegraph_length > 0.0:
-			windup_player.pitch_scale = base_len / telegraph_length
+		if base_len > 0.0 and eff_telegraph > 0.0:
+			windup_player.pitch_scale = base_len / eff_telegraph
 		windup_player.play()
 
 
@@ -276,8 +318,10 @@ func _load_tuning() -> void:
 	windup_lean_amount = 1.0
 	enemy_hp = 3
 	player_attack_recovery = 0.45
-	seed_value = 20260726
-	rng.seed = seed_value   # deterministic even on the missing/bad-file fallback path
+	vengeful_duration = 2.5
+	vengeful_telegraph_multiplier = 0.6
+	seed_value = 0
+	_apply_seed()   # same rule on the missing/bad-file fallback path
 	enemy_hp_left = enemy_hp   # R restarts the fight at full HP, same as it restarts the RNG
 	if not FileAccess.file_exists("res://tuning.json"):
 		return
@@ -296,9 +340,20 @@ func _load_tuning() -> void:
 	windup_lean_amount = maxf(0.0, _num(data, "windup_lean_amount", windup_lean_amount))
 	enemy_hp = maxi(1, int(_num(data, "enemy_hp", float(enemy_hp))))
 	player_attack_recovery = maxf(0.0, _num(data, "player_attack_recovery", player_attack_recovery))
+	vengeful_duration = maxf(0.0, _num(data, "vengeful_duration", vengeful_duration))
+	# never 0: it divides pitch_scale and anchors the counter window.
+	vengeful_telegraph_multiplier = clampf(_num(data, "vengeful_telegraph_multiplier", vengeful_telegraph_multiplier), 0.05, 1.0)
 	seed_value = int(_num(data, "seed", float(seed_value)))
-	rng.seed = seed_value
+	_apply_seed()
 	enemy_hp_left = enemy_hp
+
+
+func _apply_seed() -> void:
+	# "seed" is an optional override. Absent or <= 0 = a different A/B order every run.
+	if seed_value <= 0:
+		rng.randomize()
+	else:
+		rng.seed = seed_value
 
 
 func _num(d: Dictionary, key: String, fallback: float) -> float:
@@ -480,4 +535,9 @@ func _update_result_label() -> void:
 func _update_info_label() -> void:
 	var w: float = minf(counter_window, telegraph_length)
 	var opens: float = telegraph_length - w
-	info_label.text = "telegraph_length: %.2f s\ncounter_window:  %.2f s\ncamera_distance: %.1f\nwindup_color_amount: %.2f\nwindup_lean_amount:  %.2f\nenemy_hp: %d   (left: %d)\nplayer_attack_recovery: %.2f s\nseed: %d\ncounter window: %.2f-%.2f s of windup\nSPACE = counter A   K = counter B   J = attack   R = reload" % [telegraph_length, counter_window, camera_distance, windup_color_amount, windup_lean_amount, enemy_hp, enemy_hp_left, player_attack_recovery, seed_value, opens, telegraph_length]
+	# same math on the vengeful telegraph, printed side by side: the window SIZE should match.
+	var vt: float = telegraph_length * vengeful_telegraph_multiplier
+	var vw: float = minf(counter_window, vt)
+	var seed_txt: String = "random" if seed_value <= 0 else str(seed_value)
+	var venge_txt: String = (">>> VENGEFUL  %.1f s left <<<" % vengeful_left) if vengeful_left > 0.0 else ""
+	info_label.text = "telegraph_length: %.2f s\ncounter_window:  %.2f s\ncamera_distance: %.1f\nwindup_color_amount: %.2f\nwindup_lean_amount:  %.2f\nenemy_hp: %d   (left: %d)\nplayer_attack_recovery: %.2f s\nvengeful_duration: %.2f s\nvengeful_telegraph_multiplier: %.2f\nseed: %s\ncounter window: %.2f-%.2f s of windup   (vengeful: %.2f-%.2f)\n%s\nSPACE = counter A   K = counter B   J = attack   R = reload" % [telegraph_length, counter_window, camera_distance, windup_color_amount, windup_lean_amount, enemy_hp, enemy_hp_left, player_attack_recovery, vengeful_duration, vengeful_telegraph_multiplier, seed_txt, opens, telegraph_length, vt - vw, vt, venge_txt]

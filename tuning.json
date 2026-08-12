@@ -6,5 +6,6 @@
   "windup_lean_amount": 2.0,
   "enemy_hp": 3,
   "player_attack_recovery": 0.45,
-  "seed": 20260726
+  "vengeful_duration": 2.5,
+  "vengeful_telegraph_multiplier": 0.6
 }
