@@ -5,7 +5,7 @@
   "windup_color_amount": 0.0,
   "windup_lean_amount": 2.0,
   "enemy_hp": 3,
-  "player_attack_recovery": 0.45,
+  "player_attack_recovery": 1.0,
   "vengeful_duration": 2.5,
   "vengeful_telegraph_multiplier": 0.6
 }

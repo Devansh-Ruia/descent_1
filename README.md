@@ -40,17 +40,24 @@ check your read before the next cycle.
 
 **J** lands a hit whenever the enemy is not already mid-strike. During its strike
 you whiff, because the strike is committed and moving. Either way the press puts
-you in recovery for `player_attack_recovery` seconds, and **SPACE and K do
-nothing while that is draining**. A press during your own recovery is not
-consumed either, it simply does not happen, so you cannot burn your one counter
-attempt by mashing. That is the trade this phase exists to test: every swing you
-throw buys damage with defense.
+you in recovery for `player_attack_recovery` seconds, and while that is draining
+**SPACE, K and J all do nothing**. A blocked counter is not consumed, it simply
+does not happen, so you cannot burn your one counter attempt by mashing. A
+blocked J is eaten outright and does not refresh the lockout, so mashing cannot
+trap you in permanent recovery either. That is the trade this phase exists to
+test: every swing you throw buys damage with a full second of no defense.
 
 The enemy has `enemy_hp` hits in it (default 3). The last one ends the fight:
 the label reads **FIGHT WON**, holds through the usual recovery beat, then the
 enemy refills and the loop continues so you can keep testing. FIGHT WON does not
-print an A/B letter, because it is not a read on this cycle's attack. You still
-die to a single enemy hit. That asymmetry is deliberate.
+print an A/B letter, because it is not a read on this cycle's attack.
+
+You still die to a single enemy hit, and **dying resets the fight**: the enemy
+comes back at full HP and no longer vengeful. Otherwise trading your life for one
+hit would be strictly profitable, and the fastest route to FIGHT WON would be to
+die twice on purpose. That asymmetry is deliberate: the enemy needs three of
+yours, you need one of its. FIGHT WON and **R** reset the same way, so a fresh
+fight never starts with a rage window still running.
 
 ## Vengeful
 
@@ -59,6 +66,8 @@ pattern: it does not learn, adapt, or read you.
 
 - **Trigger.** Deterministic. Every landed hit sets `vengeful_left =
   vengeful_duration`. There is no roll and no condition. Hit it, it is vengeful.
+  A hit landed while it is *already* in the pose refreshes the rage window but
+  does not restart the pose, so repeat hits cannot pin it there.
 - **The tell.** The enemy rises tall and trembles, straight up, no rotation. That
   is on purpose: A rears back and tips away, B crouches low, and Vengeful does
   neither, so it cannot be misread as a wind-up. It snaps into the pose in about
@@ -101,7 +110,7 @@ tenth (`seed`):
   "windup_color_amount": 0.0,
   "windup_lean_amount": 2.0,
   "enemy_hp": 3,
-  "player_attack_recovery": 0.45,
+  "player_attack_recovery": 1.0,
   "vengeful_duration": 2.5,
   "vengeful_telegraph_multiplier": 0.6
 }
@@ -128,7 +137,10 @@ tenth (`seed`):
 - `enemy_hp` - integer `>= 1`, landed hits needed to win the fight. Clamped up to
   1 (a 0-HP enemy would end the fight on the first frame you touched it).
 - `player_attack_recovery` - float `>= 0`, seconds each **J** press leaves you
-  unable to counter. `0.0` makes attacking free and collapses the experiment.
+  unable to counter or swing again. `0.0` makes attacking free and collapses the
+  experiment. It also has to stay above the length of the vengeful pose (0.9 s,
+  hardcoded), or you can swing faster than the enemy can recover and it never
+  gets a turn. `1.0` is the shipped value for that reason.
 - `vengeful_duration` - float `>= 0`, seconds the rage window stays open after a
   landed hit. `0.0` turns the trait off apart from the wind-up cancel.
 - `vengeful_telegraph_multiplier` - float in `(0.0, 1.0]`, what the telegraph is
@@ -146,7 +158,7 @@ Save the file, then press **R** in-game to apply them live. The HUD shows the
 current values, the enemy's remaining HP, the resolved counter window for both a
 normal and a vengeful wind-up, and a `VENGEFUL` readout while the rage window is
 open. Missing file or a bad/missing key falls back to sane defaults
-(1.2 / 0.35 / 8.0 / 1.0 / 1.0 / 3 / 0.45 / 2.5 / 0.6, seed random) and keeps
+(1.2 / 0.35 / 8.0 / 1.0 / 1.0 / 3 / 1.0 / 2.5 / 0.6, seed random) and keeps
 running.
 
 Note the interaction between `counter_window` and the vengeful telegraph: the
@@ -194,10 +206,11 @@ Play a few fights and judge by hand:
    an attack and speeds up the next one. Whether that reads as a real trade or as
    a free win is the thing to watch.
 
-The honest failure mode to look for: if the fastest way to win is to press **J**
-three times as soon as the fight starts, the decision does not exist yet and the
-cost needs to be somewhere else (a per-swing cooldown, or a longer rage window
-than the pose).
+The honest failure mode to look for: if the fastest way to win is to mash **J**
+from the opening, the decision does not exist. `player_attack_recovery` is what
+prevents that, since it gates the next swing as well as the counters, and at
+`1.0` three hits take at least two seconds of standing there undefended. If it
+still feels free, that number is too low.
 
 Every other constant (idle jitter, strike speed, recovery time, the vengeful pose
 length and shake, colors, camera angle) is hardcoded in `main.gd`, on purpose.
@@ -212,11 +225,18 @@ Phase 2 (player offense + Vengeful):
 
 - **J** damages the enemy in idle, wind-up, recovery and vengeful, and whiffs
   only during the strike.
-- SPACE and K genuinely do nothing for `player_attack_recovery` seconds after any
-  J press, and a press inside that window does not consume the cycle's one
-  counter attempt (you can still counter later in the same wind-up).
+- SPACE, K and J all do nothing for `player_attack_recovery` seconds after any J
+  press, and a blocked counter does not consume the cycle's one counter attempt
+  (you can still counter later in the same wind-up). Mashing J does not extend
+  the lockout.
 - Three hits produce **FIGHT WON**, it holds for the recovery beat, and the enemy
-  comes back at full HP. The HUD's `left:` count matches what you have landed.
+  comes back at full HP. The HUD's `left:` count matches what you have landed,
+  and pressing J during the FIGHT WON hold does nothing.
+- Dying resets the enemy to full HP and clears the rage window, so you cannot
+  chip it down across deaths and a fresh fight never opens with a short
+  telegraph. Same after FIGHT WON and after **R**.
+- Repeat hits on an already-vengeful enemy do not restart the pose. It should
+  always get back to idle and attack you, never be locked in place.
 - Hitting the enemy mid-wind-up cancels it: the tone stops, no strike lands, and
   it rises into the vengeful pose.
 - The vengeful pose is instantly distinct from both wind-ups. It should never

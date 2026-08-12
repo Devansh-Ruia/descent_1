@@ -1,7 +1,11 @@
 extends Node3D
-# Descent - Phase 0 readability prototype.
-# One enemy loops IDLE -> WINDUP -> STRIKE -> RECOVERY -> IDLE.
-# Counter with SPACE inside the TAIL of the windup. R re-reads tuning.json live.
+# Descent - Phase 2 decision prototype.
+# One enemy loops IDLE -> WINDUP -> STRIKE -> RECOVERY -> IDLE, with a VENGEFUL
+# interrupt on top: every hit you land makes it rise tall, tremble, and telegraph
+# its next attack shorter (same counter window, less time to read it).
+# SPACE counters attack A, K counters attack B, both only inside the TAIL of the
+# windup. J attacks, and costs you your counter while the swing recovers.
+# R re-reads tuning.json live.
 # Whole scene is built in _ready() so there is no editor-authored .tscn to import.
 
 # ---- tuning (hot-reloadable from res://tuning.json) ----
@@ -11,7 +15,7 @@ var camera_distance: float = 8.0
 var windup_color_amount: float = 1.0
 var windup_lean_amount: float = 1.0
 var enemy_hp: int = 3              # landed player hits needed to win the fight
-var player_attack_recovery: float = 0.45   # seconds your own swing leaves you unable to counter
+var player_attack_recovery: float = 1.0    # seconds your own swing leaves you unable to counter or swing again
 var vengeful_duration: float = 2.5         # how long a hit keeps the enemy vengeful
 var vengeful_telegraph_multiplier: float = 0.6   # telegraph scale while vengeful; window size is untouched
 var seed_value: int = 0            # RNG seed for the A/B order + idle jitter; <= 0 = random per run
@@ -54,7 +58,7 @@ var attack: int                      # which attack this cycle telegraphs (A rea
 var state_time: float = 0.0
 var idle_gap: float = 1.0
 var counter_spent: bool = false     # one counter attempt per cycle
-var enemy_hp_left: int = 3          # refilled in _load_tuning and after a FIGHT WON
+var enemy_hp_left: int = 3          # refilled by _reset_fight (reload, FIGHT WON, or your death)
 var player_recovery_left: float = 0.0   # your own swing's recovery; blocks SPACE/K while > 0
 var hit_flinch: float = 0.0         # knock-back timer for a landed player hit
 var vengeful_left: float = 0.0      # rage window: an attack starting while > 0 telegraphs short
@@ -102,7 +106,11 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _player_attack() -> void:
-	# Attacking always costs defense, hit or whiff: SPACE/K are dead until this drains.
+	# Guard FIRST, before the assignment: otherwise mashing J would refresh the lockout
+	# forever and you could never counter again.
+	if player_recovery_left > 0.0:
+		return   # still recovering from your own swing: the input is eaten
+	# Attacking always costs defense, hit or whiff: SPACE/K/J are all dead until this drains.
 	player_recovery_left = player_attack_recovery
 	if state == State.STRIKE:
 		return   # the strike is already committed and moving: your swing whiffs
@@ -110,6 +118,8 @@ func _player_attack() -> void:
 
 
 func _hit_enemy() -> void:
+	if enemy_hp_left <= 0:
+		return   # already down, holding the FIGHT WON banner: don't re-trigger it
 	enemy_hp_left -= 1
 	hit_flinch = HIT_FLINCH_TIME
 	if enemy_hp_left <= 0:
@@ -117,7 +127,10 @@ func _hit_enemy() -> void:
 		return
 	# Vengeful: deterministic, every landed hit. No randomness, no pattern reading.
 	vengeful_left = vengeful_duration
-	_enter_vengeful()
+	if state != State.VENGEFUL:
+		_enter_vengeful()
+	# else: refresh the rage window but leave the pose running, so repeat hits cannot
+	# restart it and hold the enemy in VENGEFUL forever. It escapes on the first hit's clock.
 
 
 func _try_counter(pressed_for: int) -> void:
@@ -197,9 +210,14 @@ func _process(delta: float) -> void:
 			# low): straight up, no rotation, so it cannot be mistaken for either wind-up.
 			var d: float = minf(VENGE_POSE_TIME, vengeful_duration)
 			var e: float = clampf(minf(state_time / VENGE_RAMP_IN, (d - state_time) / VENGE_RAMP_OUT), 0.0, 1.0)
-			enemy_root.scale = Vector3(1.0 - 0.10 * e, 1.0 + VENGE_STRETCH * e, 1.0 - 0.10 * e)
-			enemy_root.position = ENEMY_BASE + Vector3(sin(state_time * TAU * VENGE_SHAKE_HZ) * VENGE_SHAKE_AMP * e, 0.0, 0.0)
-			enemy_root.rotation.x = 0.0
+			var tall := Vector3(1.0 - 0.10 * e, 1.0 + VENGE_STRETCH * e, 1.0 - 0.10 * e)
+			var shake := ENEMY_BASE + Vector3(sin(state_time * TAU * VENGE_SHAKE_HZ) * VENGE_SHAKE_AMP * e, 0.0, 0.0)
+			# `back` fades the interrupted pose out over the ramp-IN only, so the ramp-OUT
+			# still lands on baseline (tall/shake both decay to ONE/ENEMY_BASE as e -> 0).
+			var back: float = clampf(1.0 - state_time / VENGE_RAMP_IN, 0.0, 1.0)
+			enemy_root.scale = tall.lerp(rec_start_scale, back)
+			enemy_root.position = shake.lerp(rec_start_pos, back)
+			enemy_root.rotation.x = lerp(0.0, rec_start_rot, back)
 			if state_time >= d:
 				_enter_idle()   # the rage window (vengeful_left) keeps running past the pose
 
@@ -217,7 +235,7 @@ func _enter_idle() -> void:
 	idle_gap = rng.randf_range(IDLE_MIN, IDLE_MAX)
 	counter_spent = false
 	if enemy_hp_left <= 0:
-		enemy_hp_left = enemy_hp   # FIGHT WON held through recovery; refill so the human can keep testing
+		_reset_fight()   # FIGHT WON held through recovery; refill so the human can keep testing
 	result_text = "watching"
 	enemy_mat.albedo_color = COLOR_ENEMY
 	enemy_root.position = ENEMY_BASE
@@ -228,10 +246,15 @@ func _enter_idle() -> void:
 
 func _enter_vengeful() -> void:
 	# A hit during a wind-up CANCELS that attack: the cue stops and no strike commits this cycle.
-	# From IDLE / RECOVERY / VENGEFUL this just (re)starts the pose. Same call either way.
+	# From IDLE / RECOVERY this just starts the pose. Same call either way.
 	windup_player.stop()
 	state = State.VENGEFUL
 	state_time = 0.0
+	# blend out of whatever pose the hit interrupted (a mid-recovery stagger is far from
+	# baseline) instead of snapping. Reuses the recovery capture vars; the two never overlap.
+	rec_start_pos = enemy_root.position
+	rec_start_rot = enemy_root.rotation.x
+	rec_start_scale = enemy_root.scale
 	enemy_mat.albedo_color = COLOR_ENEMY   # drop any telegraph tint from the cancelled wind-up
 	result_text = "watching"
 	_update_result_label()
@@ -284,6 +307,13 @@ func _win() -> void:
 	_enter_recovery("WIN")
 
 
+func _reset_fight() -> void:
+	# Every path that restores HP goes through here, so the rage window can't survive a
+	# reset and hand the player a shortened telegraph on the first cycle of a fresh fight.
+	enemy_hp_left = enemy_hp
+	vengeful_left = 0.0
+
+
 func _win_fight() -> void:
 	# terminal outcome, distinct from the per-cycle WIN: the last hit landed.
 	# reuses the recovery timer as the hold, then _enter_idle refills enemy_hp_left.
@@ -296,6 +326,7 @@ func _win_fight() -> void:
 func _lose() -> void:
 	if hit_player.stream != null:
 		hit_player.play()
+	_reset_fight()   # dying resets the fight, so trading your life for a hit buys nothing
 	_enter_recovery("LOSE")
 
 
@@ -317,12 +348,12 @@ func _load_tuning() -> void:
 	windup_color_amount = 1.0
 	windup_lean_amount = 1.0
 	enemy_hp = 3
-	player_attack_recovery = 0.45
+	player_attack_recovery = 1.0
 	vengeful_duration = 2.5
 	vengeful_telegraph_multiplier = 0.6
 	seed_value = 0
 	_apply_seed()   # same rule on the missing/bad-file fallback path
-	enemy_hp_left = enemy_hp   # R restarts the fight at full HP, same as it restarts the RNG
+	_reset_fight()   # R restarts the fight at full HP, same as it restarts the RNG
 	if not FileAccess.file_exists("res://tuning.json"):
 		return
 	var f := FileAccess.open("res://tuning.json", FileAccess.READ)
@@ -333,7 +364,7 @@ func _load_tuning() -> void:
 	var data: Variant = JSON.parse_string(txt)
 	if typeof(data) != TYPE_DICTIONARY:
 		return
-	telegraph_length = _num(data, "telegraph_length", telegraph_length)
+	telegraph_length = maxf(0.05, _num(data, "telegraph_length", telegraph_length))   # never 0: it divides
 	counter_window = _num(data, "counter_window", counter_window)
 	camera_distance = _num(data, "camera_distance", camera_distance)
 	windup_color_amount = clampf(_num(data, "windup_color_amount", windup_color_amount), 0.0, 1.0)
@@ -345,7 +376,7 @@ func _load_tuning() -> void:
 	vengeful_telegraph_multiplier = clampf(_num(data, "vengeful_telegraph_multiplier", vengeful_telegraph_multiplier), 0.05, 1.0)
 	seed_value = int(_num(data, "seed", float(seed_value)))
 	_apply_seed()
-	enemy_hp_left = enemy_hp
+	_reset_fight()
 
 
 func _apply_seed() -> void:
