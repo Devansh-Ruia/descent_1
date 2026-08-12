@@ -10,6 +10,8 @@ var counter_window: float = 0.35
 var camera_distance: float = 8.0
 var windup_color_amount: float = 1.0
 var windup_lean_amount: float = 1.0
+var enemy_hp: int = 3              # landed player hits needed to win the fight
+var player_attack_recovery: float = 0.45   # seconds your own swing leaves you unable to counter
 var seed_value: int = 20260726     # RNG seed for the A/B order + idle jitter; hot-reloadable
 
 # ---- hardcoded knobs (deliberately NOT in tuning.json) ----
@@ -29,6 +31,8 @@ const STRIKE_LEAN := 0.5         # whip forward on the lunge
 const CROUCH_SQUASH := 0.30      # attack B: how far the enemy squashes down during windup
 const CROUCH_TIP_FWD := 0.25     # attack B: forward tip (+X rot) as it coils low
 const CROUCH_WIDEN := 0.15       # attack B: lateral widen as it squashes (planted, low stance)
+const HIT_FLINCH_TIME := 0.18    # brief knock-back so a landed player hit reads (no new audio cue)
+const HIT_KNOCK := 0.35
 const COLOR_ENEMY := Color(0.80, 0.15, 0.12)   # red idle
 const COLOR_WARN := Color(1.00, 0.82, 0.05)    # warning yellow (telegraph)
 const COLOR_STRIKE := Color(0.95, 0.10, 0.05)  # aggressive red on commit
@@ -42,6 +46,9 @@ var attack: int                      # which attack this cycle telegraphs (A rea
 var state_time: float = 0.0
 var idle_gap: float = 1.0
 var counter_spent: bool = false     # one counter attempt per cycle
+var enemy_hp_left: int = 3          # refilled in _load_tuning and after a FIGHT WON
+var player_recovery_left: float = 0.0   # your own swing's recovery; blocks SPACE/K while > 0
+var hit_flinch: float = 0.0         # knock-back timer for a landed player hit
 var result_text: String = "watching"
 var flash: float = 0.0
 var rec_start_pos: Vector3 = ENEMY_BASE
@@ -76,13 +83,32 @@ func _unhandled_input(event: InputEvent) -> void:
 			_try_counter(AttackType.A)
 		elif event.keycode == KEY_K:
 			_try_counter(AttackType.B)
+		elif event.keycode == KEY_J:
+			_player_attack()
 		elif event.keycode == KEY_R:
 			_load_tuning()
 			_apply_camera()
 			_update_info_label()
 
 
+func _player_attack() -> void:
+	# Attacking always costs defense, hit or whiff: SPACE/K are dead until this drains.
+	player_recovery_left = player_attack_recovery
+	if state == State.STRIKE:
+		return   # the strike is already committed and moving: your swing whiffs
+	_hit_enemy()
+
+
+func _hit_enemy() -> void:
+	enemy_hp_left -= 1
+	hit_flinch = HIT_FLINCH_TIME
+	if enemy_hp_left <= 0:
+		_win_fight()
+
+
 func _try_counter(pressed_for: int) -> void:
+	if player_recovery_left > 0.0:
+		return   # still recovering from your own swing: no counter, and the attempt is NOT spent
 	if counter_spent:
 		return
 	if state == State.WINDUP:
@@ -100,6 +126,7 @@ func _try_counter(pressed_for: int) -> void:
 # ---------- state machine ----------
 func _process(delta: float) -> void:
 	state_time += delta
+	player_recovery_left = maxf(0.0, player_recovery_left - delta)
 	if flash > 0.0:
 		flash = max(0.0, flash - delta * 2.5)
 		flash_rect.color = Color(0.6, 1.0, 0.7, flash * 0.55)
@@ -150,12 +177,21 @@ func _process(delta: float) -> void:
 			if state_time >= RECOVERY_TIME:
 				_enter_idle()
 
+	# knock-back from a landed player hit, drawn over whatever the state just posed.
+	# absolute set (not -=) so it cannot accumulate in IDLE, where nothing else writes position.
+	if hit_flinch > 0.0:
+		hit_flinch = maxf(0.0, hit_flinch - delta)
+		enemy_root.position.z = ENEMY_BASE.z - HIT_KNOCK * (hit_flinch / HIT_FLINCH_TIME)
+	_update_info_label()   # ponytail: one format string per frame keeps the HP/state readout live
+
 
 func _enter_idle() -> void:
 	state = State.IDLE
 	state_time = 0.0
 	idle_gap = rng.randf_range(IDLE_MIN, IDLE_MAX)
 	counter_spent = false
+	if enemy_hp_left <= 0:
+		enemy_hp_left = enemy_hp   # FIGHT WON held through recovery; refill so the human can keep testing
 	result_text = "watching"
 	enemy_mat.albedo_color = COLOR_ENEMY
 	enemy_root.position = ENEMY_BASE
@@ -181,14 +217,18 @@ func _enter_strike() -> void:
 	state_time = 0.0
 
 
-func _enter_recovery(text: String) -> void:
+func _enter_recovery(text: String, reveal: bool = true) -> void:
 	state = State.RECOVERY
 	state_time = 0.0
 	rec_start_pos = enemy_root.position
 	rec_start_rot = enemy_root.rotation.x
 	rec_start_scale = enemy_root.scale
 	# reveal the ground-truth attack letter ONLY now (recovery); idle/windup stay "watching".
-	result_text = "%s  (%s)" % [text, ("A" if attack == AttackType.A else "B")]
+	# reveal=false for outcomes that are not a read on this cycle's attack (FIGHT WON).
+	if reveal:
+		result_text = "%s  (%s)" % [text, ("A" if attack == AttackType.A else "B")]
+	else:
+		result_text = text
 	_update_result_label()
 
 
@@ -200,6 +240,15 @@ func _win() -> void:
 	enemy_root.rotation.x = -0.9
 	enemy_root.position = ENEMY_BASE + Vector3(0.0, 0.0, -0.6)
 	_enter_recovery("WIN")
+
+
+func _win_fight() -> void:
+	# terminal outcome, distinct from the per-cycle WIN: the last hit landed.
+	# reuses the recovery timer as the hold, then _enter_idle refills enemy_hp_left.
+	windup_player.stop()
+	flash = 1.0
+	enemy_mat.albedo_color = COLOR_STAGGER
+	_enter_recovery("FIGHT WON", false)
 
 
 func _lose() -> void:
@@ -225,8 +274,11 @@ func _load_tuning() -> void:
 	camera_distance = 8.0
 	windup_color_amount = 1.0
 	windup_lean_amount = 1.0
+	enemy_hp = 3
+	player_attack_recovery = 0.45
 	seed_value = 20260726
 	rng.seed = seed_value   # deterministic even on the missing/bad-file fallback path
+	enemy_hp_left = enemy_hp   # R restarts the fight at full HP, same as it restarts the RNG
 	if not FileAccess.file_exists("res://tuning.json"):
 		return
 	var f := FileAccess.open("res://tuning.json", FileAccess.READ)
@@ -242,8 +294,11 @@ func _load_tuning() -> void:
 	camera_distance = _num(data, "camera_distance", camera_distance)
 	windup_color_amount = clampf(_num(data, "windup_color_amount", windup_color_amount), 0.0, 1.0)
 	windup_lean_amount = maxf(0.0, _num(data, "windup_lean_amount", windup_lean_amount))
+	enemy_hp = maxi(1, int(_num(data, "enemy_hp", float(enemy_hp))))
+	player_attack_recovery = maxf(0.0, _num(data, "player_attack_recovery", player_attack_recovery))
 	seed_value = int(_num(data, "seed", float(seed_value)))
 	rng.seed = seed_value
+	enemy_hp_left = enemy_hp
 
 
 func _num(d: Dictionary, key: String, fallback: float) -> float:
@@ -414,7 +469,7 @@ func _build_hud() -> void:
 func _update_result_label() -> void:
 	result_label.text = result_text
 	# text now carries a "  (A/B)" suffix in recovery, so match on the prefix.
-	if result_text.begins_with("WIN"):
+	if result_text.begins_with("WIN") or result_text.begins_with("FIGHT WON"):
 		result_label.modulate = Color(0.4, 1.0, 0.5)
 	elif result_text.begins_with("LOSE"):
 		result_label.modulate = Color(1.0, 0.4, 0.35)
@@ -425,4 +480,4 @@ func _update_result_label() -> void:
 func _update_info_label() -> void:
 	var w: float = minf(counter_window, telegraph_length)
 	var opens: float = telegraph_length - w
-	info_label.text = "telegraph_length: %.2f s\ncounter_window:  %.2f s\ncamera_distance: %.1f\nwindup_color_amount: %.2f\nwindup_lean_amount:  %.2f\nseed: %d\ncounter window: %.2f-%.2f s of windup\nSPACE = counter A   K = counter B   R = reload" % [telegraph_length, counter_window, camera_distance, windup_color_amount, windup_lean_amount, seed_value, opens, telegraph_length]
+	info_label.text = "telegraph_length: %.2f s\ncounter_window:  %.2f s\ncamera_distance: %.1f\nwindup_color_amount: %.2f\nwindup_lean_amount:  %.2f\nenemy_hp: %d   (left: %d)\nplayer_attack_recovery: %.2f s\nseed: %d\ncounter window: %.2f-%.2f s of windup\nSPACE = counter A   K = counter B   J = attack   R = reload" % [telegraph_length, counter_window, camera_distance, windup_color_amount, windup_lean_amount, enemy_hp, enemy_hp_left, player_attack_recovery, seed_value, opens, telegraph_length]

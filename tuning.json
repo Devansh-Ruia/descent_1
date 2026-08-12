@@ -4,5 +4,7 @@
   "camera_distance": 8.0,
   "windup_color_amount": 0.0,
   "windup_lean_amount": 2.0,
+  "enemy_hp": 3,
+  "player_attack_recovery": 0.45,
   "seed": 20260726
 }
