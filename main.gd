@@ -4,7 +4,8 @@ extends Node3D
 # interrupt on top: every hit you land makes it rise tall, tremble, and telegraph
 # its next attack shorter (same counter window, less time to read it).
 # SPACE counters attack A, K counters attack B, both only inside the TAIL of the
-# windup. J attacks, and costs you your counter while the swing recovers.
+# windup. J attacks, and costs you your counter while the swing recovers. J cancels a
+# normal wind-up but WHIFFS on the retaliation: the one you provoked has to be countered.
 # R re-reads tuning.json live.
 # Whole scene is built in _ready() so there is no editor-authored .tscn to import.
 
@@ -63,6 +64,7 @@ var player_recovery_left: float = 0.0   # your own swing's recovery; blocks SPAC
 var hit_flinch: float = 0.0         # knock-back timer for a landed player hit
 var vengeful_left: float = 0.0      # rage window: an attack starting while > 0 telegraphs short
 var eff_telegraph: float = 1.2      # this cycle's telegraph, locked at _enter_windup so it cannot shift
+var vengeful_cycle: bool = false    # is THIS wind-up a retaliation? locked alongside eff_telegraph
 var result_text: String = "watching"
 var flash: float = 0.0
 var rec_start_pos: Vector3 = ENEMY_BASE
@@ -114,6 +116,8 @@ func _player_attack() -> void:
 	player_recovery_left = player_attack_recovery
 	if state == State.STRIKE:
 		return   # the strike is already committed and moving: your swing whiffs
+	if state == State.WINDUP and vengeful_cycle:
+		return   # you provoked this one: you must counter it, not cancel it
 	_hit_enemy()
 
 
@@ -167,17 +171,29 @@ func _process(delta: float) -> void:
 		State.WINDUP:
 			var p: float = clamp(state_time / eff_telegraph, 0.0, 1.0)
 			var lean := windup_lean_amount
+			# Pose progress, separate from timing progress. A retaliation is short AND, on a
+			# plain ramp, only about half-formed when the counter window opens: less pose and
+			# less time at once. Front-load the pose so it is fully formed the moment you can
+			# press. Normal cycles keep pose_p == p exactly, and pose_p still reaches 1.0 at
+			# the commit, so the STRIKE branch's start pose matches and nothing pops.
+			var pose_p: float = p
+			if vengeful_cycle:
+				var open_at: float = eff_telegraph - minf(counter_window, eff_telegraph)
+				if open_at > 0.0:
+					pose_p = clamp(state_time / open_at, 0.0, 1.0)
+				# open_at <= 0.0 means the window covers the whole wind-up: nothing to
+				# front-load onto, so the pose keeps the plain ramp.
 			if attack == AttackType.A:
 				# A: rear back and tilt away (top tips back), coiling for a lunge.
 				enemy_root.scale = Vector3.ONE
-				enemy_root.rotation.x = lerp(0.0, WINDUP_LEAN * lean, p)
-				enemy_root.position = ENEMY_BASE + Vector3(0.0, 0.0, -WINDUP_STEP_BACK * lean * p)
+				enemy_root.rotation.x = lerp(0.0, WINDUP_LEAN * lean, pose_p)
+				enemy_root.position = ENEMY_BASE + Vector3(0.0, 0.0, -WINDUP_STEP_BACK * lean * pose_p)
 			else:
 				# B: crouch low in place -> squash down, tip forward, widen (feet stay planted at y=0).
 				enemy_root.position = ENEMY_BASE
-				enemy_root.rotation.x = lerp(0.0, CROUCH_TIP_FWD * lean, p)
-				var sy := maxf(0.15, 1.0 - CROUCH_SQUASH * lean * p)
-				enemy_root.scale = Vector3(1.0 + CROUCH_WIDEN * lean * p, sy, 1.0 + CROUCH_WIDEN * lean * p)
+				enemy_root.rotation.x = lerp(0.0, CROUCH_TIP_FWD * lean, pose_p)
+				var sy := maxf(0.15, 1.0 - CROUCH_SQUASH * lean * pose_p)
+				enemy_root.scale = Vector3(1.0 + CROUCH_WIDEN * lean * pose_p, sy, 1.0 + CROUCH_WIDEN * lean * pose_p)
 			enemy_mat.albedo_color = COLOR_ENEMY.lerp(COLOR_WARN, p * windup_color_amount)
 			if state_time >= eff_telegraph:
 				_enter_strike()
@@ -270,8 +286,11 @@ func _enter_windup() -> void:
 	counter_spent = false
 	# Locked once, here: the telegraph this cycle uses cannot shift mid-wind-up even if the
 	# rage window expires while the enemy is already coiling. telegraph_length stays the tuning value.
+	# vengeful_cycle is locked on the same line of reasoning: J's whiff rule reads it at press
+	# time, and testing vengeful_left there would flicker if the window expired mid-wind-up.
+	vengeful_cycle = vengeful_left > 0.0
 	eff_telegraph = telegraph_length
-	if vengeful_left > 0.0:
+	if vengeful_cycle:
 		eff_telegraph = telegraph_length * vengeful_telegraph_multiplier
 	state = State.WINDUP
 	state_time = 0.0

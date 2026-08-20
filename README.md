@@ -38,8 +38,10 @@ check your read before the next cycle.
 
 ## Your attack, and what it costs
 
-**J** lands a hit whenever the enemy is not already mid-strike. During its strike
-you whiff, because the strike is committed and moving. Either way the press puts
+**J** lands a hit whenever the enemy is not already mid-strike and not winding up
+a retaliation. It whiffs during the strike, because the strike is committed and
+moving, and it whiffs for the whole of a vengeful wind-up, because that attack is
+the one you provoked (see **Vengeful** below). Either way the press puts
 you in recovery for `player_attack_recovery` seconds, and while that is draining
 **SPACE, K and J all do nothing**. A blocked counter is not consumed, it simply
 does not happen, so you cannot burn your one counter attempt by mashing. A
@@ -84,10 +86,24 @@ pattern: it does not learn, adapt, or read you.
   becomes 0.72 s). The **counter window keeps its size**: it is still
   `counter_window` seconds, still anchored to the tail of the wind-up. You get
   less time to read, not less time to press.
-- **Cancel.** A hit landed during a wind-up **cancels that attack**. The cue
-  stops and no strike commits from it. This is not a free reset: the enemy rises
-  into the pose and then throws a fresh, faster attack with a newly rolled A or
-  B. Punishing a wind-up works, and it is exactly what makes the next one faster.
+- **How you counter it.** Exactly like any other attack. The retaliation reuses
+  attack A or attack B, picked by a fresh coin flip, and the counter mapping is
+  unchanged and universal: **SPACE beats A, K beats B**. There is no third pose
+  and no special input. The vengeful rise ramps out to baseline *before* the
+  wind-up starts, so it never bleeds into the A/B coil, and on a vengeful cycle
+  the A/B pose is **fully formed by the time the counter window opens** instead
+  of half-built. The pose ramp is compressed into the part of the wind-up before
+  the window; the timing is untouched. You get less time, not a worse picture.
+- **Cancel, once.** A hit landed during a *normal* wind-up **cancels that
+  attack**. The cue stops and no strike commits from it. The enemy rises into the
+  pose and then throws a fresh, faster attack with a newly rolled A or B.
+- **No second cancel.** **J whiffs for the whole vengeful wind-up.** The press is
+  eaten, the recovery is still paid, and the retaliation comes anyway. You
+  provoked that attack, so you have to counter it. This closes the loop
+  play-testing found: every swing was landing inside the retaliation's wind-up
+  and cancelling it, so aggression never had to pay for what it started. Whether
+  a wind-up is vengeful is locked at the moment it starts, so the rule cannot
+  flicker if the rage window expires while the enemy is already coiling.
 - **Expiry.** The rage window runs underneath all of this. After a retaliation
   cycle it usually runs out during the enemy's recovery, so once the loop
   settles back to idle the next attack telegraphs at normal length. Raise
@@ -206,9 +222,11 @@ way:
 - **Hold back.** You are free at 1.0 s, well before the window opens at 1.27 s.
   Read A or B off the short wind-up, press the right counter, and you win the
   cycle without taking a hit.
-- **Swing again.** You land a second hit and go into recovery until 2.0 s. The
-  retaliation commits at 1.62 s, while you are still locked out. It hits you and
-  you die.
+- **Swing again.** You press **J** at 1.0 s, but the retaliation is already
+  coiling and a vengeful wind-up cannot be cancelled, so the swing whiffs. No
+  damage, and you are locked out again until 2.0 s. The strike commits at 1.62 s,
+  inside that lockout. It hits you and you die. This is the half that used to be
+  free: the same press used to delete the attack.
 
 That is the dilemma stated in seconds. There is no jitter in it, so which way it
 goes is your read, not the RNG. Play a few fights and judge by hand:
@@ -223,17 +241,20 @@ goes is your read, not the RNG. Play a few fights and judge by hand:
 3. Does the rise-and-tremble land as a warning, or does it just look like a third
    attack you should be countering? It is meant to say "the next one is fast",
    not "counter me now".
-4. Does the wind-up cancel feel good or feel cheap? Punishing a wind-up removes
-   an attack and speeds up the next one. Whether that reads as a real trade or as
-   a free win is the thing to watch.
+4. Does the wind-up cancel feel good or feel cheap? Punishing a normal wind-up
+   removes an attack and speeds up the next one. You only get the one, because
+   **J** whiffs on the retaliation, so the trade is: one attack deleted in
+   exchange for a faster one you are committed to reading.
 
 The honest failure mode to look for: if the fastest way to win is to mash **J**
-from the opening, the decision does not exist. Two things prevent that, and if it
-still feels free, one of them is mistuned. `player_attack_recovery` gates the next
-swing as well as the counters, so hits cannot be chained faster than 1.0 s. And
-the retaliation out of the vengeful pose means the second hit in a chain is
-answered at 1.62 s, inside the lockout the second hit bought. Mashing does not
-race the enemy any more, it feeds it.
+from the opening, the decision does not exist. Three things prevent that, and if
+it still feels free, one of them is mistuned. `player_attack_recovery` gates the
+next swing as well as the counters, so hits cannot be chained faster than 1.0 s.
+The retaliation out of the vengeful pose means the second hit in a chain is
+answered at 1.62 s, inside the lockout the second hit bought. And **J** whiffs on
+that retaliation, so the swing that used to cancel it now just spends your
+defense and leaves the attack standing. Mashing does not race the enemy, it feeds
+it.
 
 Every other constant (idle jitter, strike speed, recovery time, the vengeful pose
 length and shake, colors, camera angle) is hardcoded in `main.gd`, on purpose.
@@ -246,8 +267,14 @@ below has been seen or heard running. Verify by hand in the editor:
 
 Phase 2 (player offense + Vengeful):
 
-- **J** damages the enemy in idle, wind-up, recovery and vengeful, and whiffs
-  only during the strike.
+- **J** damages the enemy in idle, a normal wind-up, recovery and the vengeful
+  pose, and whiffs during the strike and during a vengeful wind-up.
+- **J** whiffs for the whole retaliation wind-up: press it there and the enemy
+  keeps coiling, no hit registers, the HP count does not move, and your recovery
+  is still spent (SPACE, K and J are all dead for `player_attack_recovery`
+  seconds afterwards). A *normal* wind-up still cancels exactly as before.
+- On a vengeful cycle the A or B pose is fully formed by the time the counter
+  window opens, and there is no visual pop at the moment the strike commits.
 - SPACE, K and J all do nothing for `player_attack_recovery` seconds after any J
   press, and a blocked counter does not consume the cycle's one counter attempt
   (you can still counter later in the same wind-up). Mashing J does not extend
@@ -260,15 +287,16 @@ Phase 2 (player offense + Vengeful):
   telegraph. Same after FIGHT WON and after **R**.
 - Repeat hits on an already-vengeful enemy do not restart the pose. It should
   always get back to idle and attack you, never be locked in place.
-- Hitting the enemy mid-wind-up cancels it: the tone stops, no strike lands, and
-  it rises into the vengeful pose.
+- Hitting the enemy mid-*normal*-wind-up cancels it: the tone stops, no strike
+  lands, and it rises into the vengeful pose.
 - The pose leads straight into a wind-up with no idle pause, and that retaliation
   is counterable. Land a hit, do nothing else, and confirm you can read A or B
   off the short wind-up and counter it. If you cannot, the trait is a punishment
   rather than a constraint.
-- Land a hit, immediately land a second, and confirm the retaliation reaches you
-  while you are still locked out. That failure should be legible as your choice,
-  not as the enemy cheating.
+- Land a hit, then press **J** again the moment your recovery clears: the swing
+  whiffs into the retaliation wind-up and the strike reaches you while you are
+  locked out. That failure should be legible as your choice, not as the enemy
+  cheating.
 - The vengeful pose is instantly distinct from both wind-ups. It should never
   bait you into pressing a counter.
 - The exit from the pose is animated, not a snap, and no vengeful stretch or
