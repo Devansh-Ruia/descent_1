@@ -9,6 +9,8 @@ counter. You are judging:
 2. Does landing the right counter feel like a **read**, not a guess between two
    buttons?
 3. Does hitting the enemy feel like it costs you something?
+4. Both verbs deal damage now. Do you ever *choose* the slow safe one, or is one
+   of the two strictly better?
 
 ## How to run
 
@@ -31,8 +33,9 @@ The enemy loops forever: it waits, telegraphs one of two wind-ups while a rising
 tone plays (the tell), then lunges. Attack A rears back tall and tips away;
 attack B crouches low, squashing down in place. Both share the same tone and the
 same timing, so the pose is the only thing that says which is coming. Counter the
-correct attack during the tell's tail = WIN (flash + label). Wrong counter,
-mistimed, or nothing = the strike lands (thud) = LOSE. After each result it
+correct attack during the tell's tail = WIN (flash + label), and it takes
+`counter_damage` off the enemy's HP. Wrong counter, mistimed, or nothing = the
+strike lands (thud) = LOSE. After each result it
 auto-resets and reveals the attack letter (A or B) on the label, so you can
 check your read before the next cycle.
 
@@ -49,10 +52,40 @@ blocked J is eaten outright and does not refresh the lockout, so mashing cannot
 trap you in permanent recovery either. That is the trade this phase exists to
 test: every swing you throw buys damage with a full second of no defense.
 
-The enemy has `enemy_hp` hits in it (default 3). The last one ends the fight:
-the label reads **FIGHT WON**, holds through the usual recovery beat, then the
-enemy refills and the loop continues so you can keep testing. FIGHT WON does not
+The enemy has `enemy_hp` HP (default 3). A landed **J** takes off
+`attack_damage`, a successful counter takes off `counter_damage`, both default
+`1`. The blow that empties the bar ends the fight: the label reads **FIGHT WON**,
+holds through the usual recovery beat, then the enemy refills and the loop
+continues so you can keep testing. That is true whichever verb landed it, so a
+counter can end a fight and it reads FIGHT WON, not WIN. FIGHT WON does not
 print an A/B letter, because it is not a read on this cycle's attack.
+
+## Two ways to deal damage
+
+Countering deals damage. Before, it only cancelled an attack, so the only way to
+actually kill the enemy was to swing, and the only question the phase could ask
+was "how much does swinging cost". Now both verbs advance the fight and the
+choice between them is a real one:
+
+- **Swing (J).** Fast. You can throw one every `player_attack_recovery` seconds
+  and you do not have to wait for the enemy to do anything. It costs your
+  defense for that whole second, and it **arms Vengeful**: the enemy rises,
+  retaliates at a 0.72 s telegraph, and that retaliation cannot be cancelled.
+- **Counter (SPACE / K).** Safe. It deals its damage without spending your
+  defense first and it **never enrages the enemy**: no pose, no rage window, no
+  shortened telegraph. What limits it is that you do not control the clock. You
+  can only counter an attack the enemy chose to throw, and it chooses on a
+  jittered `0.6-1.6` s idle gap plus a 1.2 s telegraph.
+
+The enrage is a property of the **source** of the damage, not of taking damage,
+which is why it lives at the two call sites rather than inside the shared damage
+path. The rate limit on countering is the idle jitter, deliberately, not a
+damage penalty: making the counter deal less would just re-answer the question
+with arithmetic instead of with a decision.
+
+You still die to a single enemy hit, so the safe verb is not free either. Waiting
+for a wind-up you then misread is a loss, and a whole fight of waiting is a fight
+you spend inside the enemy's tempo.
 
 You still die to a single enemy hit, and **dying resets the fight**: the enemy
 comes back at full HP and no longer vengeful. Otherwise trading your life for one
@@ -66,10 +99,13 @@ fight never starts with a rage window still running.
 The first trait, and the only one. Vengeful is a constraint, not a behaviour
 pattern: it does not learn, adapt, or read you.
 
-- **Trigger.** Deterministic. Every landed hit sets `vengeful_left =
-  vengeful_duration`. There is no roll and no condition. Hit it, it is vengeful.
-  A hit landed while it is *already* in the pose refreshes the rage window but
-  does not restart the pose, so repeat hits cannot pin it there.
+- **Trigger.** Deterministic, and it is your **swing** that does it. Every landed
+  **J** sets `vengeful_left = vengeful_duration`. There is no roll and no
+  condition: hit it with J, it is vengeful. A **counter never enrages it**, at
+  any `counter_damage`. The enrage is a property of the verb you used, not of the
+  enemy taking damage. A swing landed while it is *already* in the pose refreshes
+  the rage window but does not restart the pose, so repeat hits cannot pin it
+  there.
 - **The tell.** The enemy rises tall and trembles, straight up, no rotation. That
   is on purpose: A rears back and tips away, B crouches low, and Vengeful does
   neither, so it cannot be misread as a wind-up. It snaps into the pose in about
@@ -124,8 +160,8 @@ is ever unwanted.
 
 ## Tuning
 
-Edit `tuning.json` at the repo root. Nine keys, all numbers, plus one optional
-tenth (`seed`):
+Edit `tuning.json` at the repo root. Eleven keys, all numbers, plus one
+optional twelfth (`seed`):
 
 ```json
 {
@@ -135,6 +171,8 @@ tenth (`seed`):
   "windup_color_amount": 0.0,
   "windup_lean_amount": 2.0,
   "enemy_hp": 3,
+  "counter_damage": 1,
+  "attack_damage": 1,
   "player_attack_recovery": 1.0,
   "vengeful_duration": 2.5,
   "vengeful_telegraph_multiplier": 0.6
@@ -159,8 +197,17 @@ tenth (`seed`):
   exaggerated, `0.0` = no pose change, which makes both attacks look identical
   and collapses the test. Each strike lunge starts from its scaled wind-up pose,
   so there is no pop when you change it.
-- `enemy_hp` - integer `>= 1`, landed hits needed to win the fight. Clamped up to
+- `enemy_hp` - integer `>= 1`, HP the enemy starts each fight with. Clamped up to
   1 (a 0-HP enemy would end the fight on the first frame you touched it).
+- `counter_damage` - integer `>= 0`, HP a successful counter takes off. Floored
+  at `0`, not at `1`, because "this verb deals no damage" is a legitimate
+  experiment: set it to `0` to get the old behaviour back, where countering only
+  cancelled the attack, and compare. Countering never enrages the enemy at any
+  value.
+- `attack_damage` - integer `>= 0`, HP one landed **J** takes off. Same floor and
+  the same reason. At `0` a swing still costs your defense and still arms
+  Vengeful, it just does not advance the fight, which is the cleanest way to feel
+  what the swing is actually buying you.
 - `player_attack_recovery` - float `>= 0`, seconds each **J** press leaves you
   unable to counter or swing again. `0.0` makes attacking free and collapses the
   experiment. It also has to stay above the length of the vengeful pose (0.9 s,
@@ -182,11 +229,11 @@ tenth (`seed`):
   truncated. The HUD prints `seed: random` when no override is in force.
 
 Save the file, then press **R** in-game to apply them live. The HUD shows the
-current values, the enemy's remaining HP, the resolved counter window for both a
-normal and a vengeful wind-up, and a `VENGEFUL` readout while the rage window is
+current values, the enemy's remaining HP, both damage numbers, the resolved
+counter window for both a normal and a vengeful wind-up, and a `VENGEFUL` readout while the rage window is
 open. Missing file or a bad/missing key falls back to sane defaults
-(1.2 / 0.35 / 8.0 / 1.0 / 1.0 / 3 / 1.0 / 2.5 / 0.6, seed random) and keeps
-running.
+(1.2 / 0.35 / 8.0 / 1.0 / 1.0 / 3 / 1 / 1 / 1.0 / 2.5 / 0.6, seed random) and
+keeps running.
 
 Note the interaction between `counter_window` and the vengeful telegraph: the
 window is clamped to at most the whole wind-up. If you set `counter_window`
@@ -209,10 +256,24 @@ the whole tell. Set `windup_color_amount` to `0.0` and `windup_lean_amount` to
 If the two wind-ups read apart at color `0.0`, the pose is carrying the tell. If
 they blur together, the tell was leaning on color.
 
-### Experiment: is "stop attacking" an interesting decision?
+### Experiment: do you ever choose to hold back and counter?
 
-This is the question Phase 2 exists to answer, and at the shipped values it comes
-down to arithmetic you can do at the keyboard.
+This is the question Phase 2 exists to answer. Both verbs deal damage, so both
+are a way to win the fight, and the whole point is to find out whether the choice
+between them is real or whether one is simply better. At the shipped values it
+comes down to arithmetic you can do at the keyboard.
+
+The two verbs are not symmetric, on purpose:
+
+- **Swinging is faster.** One swing every `player_attack_recovery` seconds,
+  whenever you want it. It costs your defense for that second and it arms
+  Vengeful, and since **J** whiffs on a vengeful wind-up, the retaliation you
+  bought is one you have to counter.
+- **Countering is safe.** No enrage, no shortened telegraph, no defense spent up
+  front. What it costs is control of the clock: you can only counter an attack
+  the enemy chose to throw, on a `0.6-1.6` s jittered idle gap plus a 1.2 s
+  telegraph. The jitter is what rate-limits the counter path, not a damage
+  penalty.
 
 Land a hit at `t = 0`. The enemy rises for 0.9 s and its retaliation commits at
 1.62 s, with the counter window open from 1.27 s. Your own recovery ends at
@@ -229,11 +290,14 @@ way:
   free: the same press used to delete the attack.
 
 That is the dilemma stated in seconds. There is no jitter in it, so which way it
-goes is your read, not the RNG. Play a few fights and judge by hand:
+goes is your read, not the RNG. Play several fights and judge by hand:
 
-1. Do you ever *choose* to hold back, or do you just attack whenever the enemy is
-   not striking? If the answer is always attack, the cost is too cheap. Raise
-   `player_attack_recovery`, or lower `vengeful_telegraph_multiplier`.
+1. Do you ever *choose* to hold back and counter instead of swinging, or is one
+   of the two verbs still strictly better? If you always swing, the cost is too
+   cheap: raise `player_attack_recovery`, or lower
+   `vengeful_telegraph_multiplier`. If you always wait, swinging is not buying
+   enough: the shipped answer is that it buys tempo, so check whether the idle
+   jitter is actually making you wait.
 2. Is the shortened telegraph readable at all, or does a vengeful attack feel
    unfair? If it is unreadable, the trait is a punishment rather than a
    constraint. Raise `vengeful_telegraph_multiplier` toward `1.0` until it is
@@ -262,8 +326,21 @@ length and shake, colors, camera angle) is hardcoded in `main.gd`, on purpose.
 ## Verification
 
 The machine this was written on has no Godot binary, so **everything in Phase 2
-is reviewed against Godot 4 conventions and is not runtime-confirmed**. Nothing
-below has been seen or heard running. Verify by hand in the editor:
+is reviewed against Godot 4 conventions and is not runtime-confirmed**. That
+includes both of the fixes on this page: the **J** whiff on vengeful wind-ups and
+counter damage. Nothing below has been seen or heard running. Verify by hand in
+the editor:
+
+The four that matter most, because both fixes hang off them:
+
+- **J** whiffs during a vengeful wind-up and your recovery is still paid for the
+  whiff, and **J** still cancels a normal wind-up exactly as before.
+- Counters deal damage, and a counter can land the killing blow: the label reads
+  **FIGHT WON**, with no A/B letter after it, not the per-cycle **WIN**.
+- The vengeful pose is distinct from both A and B at `windup_color_amount` `0.0`.
+  It is the pose that has to carry it, so check it with color off.
+- Neither pure-swinging nor pure-countering wins every fight. If either one does,
+  the phase has the same problem it started with, just pointed the other way.
 
 Phase 2 (player offense + Vengeful):
 
@@ -282,6 +359,16 @@ Phase 2 (player offense + Vengeful):
 - Three hits produce **FIGHT WON**, it holds for the recovery beat, and the enemy
   comes back at full HP. The HUD's `left:` count matches what you have landed,
   and pressing J during the FIGHT WON hold does nothing.
+- A successful counter takes `counter_damage` off the HUD's `left:` count, and
+  the enemy does **not** go vengeful from it: no rise, no tremble, no `VENGEFUL`
+  readout, and the next wind-up is full length. Counter three times in a row and
+  the fight ends without the enemy ever being enraged.
+- Mix the verbs: swing once, counter twice, and confirm the fight still ends at
+  three and the FIGHT WON hold looks the same whichever verb landed last.
+- Set `counter_damage` to `0`, press **R**, and countering goes back to cancelling
+  the attack without advancing the fight. Set `attack_damage` to `0` and a swing
+  still enrages the enemy while buying nothing. Both are experiments, not
+  settings to ship.
 - Dying resets the enemy to full HP and clears the rage window, so you cannot
   chip it down across deaths and a fresh fight never opens with a short
   telegraph. Same after FIGHT WON and after **R**.

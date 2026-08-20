@@ -15,7 +15,9 @@ var counter_window: float = 0.35
 var camera_distance: float = 8.0
 var windup_color_amount: float = 1.0
 var windup_lean_amount: float = 1.0
-var enemy_hp: int = 3              # landed player hits needed to win the fight
+var enemy_hp: int = 3              # HP the enemy starts each fight with
+var counter_damage: int = 1        # HP a successful counter takes off (countering never enrages)
+var attack_damage: int = 1         # HP one landed J swing takes off
 var player_attack_recovery: float = 1.0    # seconds your own swing leaves you unable to counter or swing again
 var vengeful_duration: float = 2.5         # how long a hit keeps the enemy vengeful
 var vengeful_telegraph_multiplier: float = 0.6   # telegraph scale while vengeful; window size is untouched
@@ -121,20 +123,31 @@ func _player_attack() -> void:
 	_hit_enemy()
 
 
-func _hit_enemy() -> void:
+func _damage_enemy(amount: int, enrage: bool) -> void:
+	# One damage path, two verbs. `enrage` is a property of the SOURCE, not of taking damage:
+	# swinging arms Vengeful, countering does not. That asymmetry IS the design rule
+	# ("countering is safe"), so it has to live at the call site, not in here.
 	if enemy_hp_left <= 0:
 		return   # already down, holding the FIGHT WON banner: don't re-trigger it
-	enemy_hp_left -= 1
-	hit_flinch = HIT_FLINCH_TIME
+	enemy_hp_left = maxi(0, enemy_hp_left - amount)   # amount 0 is legal: a verb that deals none
 	if enemy_hp_left <= 0:
 		_win_fight()
 		return
-	# Vengeful: deterministic, every landed hit. No randomness, no pattern reading.
+	if not enrage:
+		return
+	# Vengeful: deterministic, every landed swing. No randomness, no pattern reading.
 	vengeful_left = vengeful_duration
 	if state != State.VENGEFUL:
 		_enter_vengeful()
 	# else: refresh the rage window but leave the pose running, so repeat hits cannot
 	# restart it and hold the enemy in VENGEFUL forever. It escapes on the first hit's clock.
+
+
+func _hit_enemy() -> void:
+	if enemy_hp_left <= 0:
+		return   # already down: no flinch either
+	hit_flinch = HIT_FLINCH_TIME   # J only; a counter has its own stagger pose to read
+	_damage_enemy(attack_damage, true)
 
 
 func _try_counter(pressed_for: int) -> void:
@@ -178,7 +191,9 @@ func _process(delta: float) -> void:
 			# the commit, so the STRIKE branch's start pose matches and nothing pops.
 			var pose_p: float = p
 			if vengeful_cycle:
-				var open_at: float = eff_telegraph - minf(counter_window, eff_telegraph)
+				# clampf, not minf: a negative counter_window (degenerate, but nothing floors it)
+				# would push open_at past eff_telegraph and leave the pose short at the commit.
+				var open_at: float = eff_telegraph - clampf(counter_window, 0.0, eff_telegraph)
 				if open_at > 0.0:
 					pose_p = clamp(state_time / open_at, 0.0, 1.0)
 				# open_at <= 0.0 means the window covers the whole wind-up: nothing to
@@ -323,6 +338,12 @@ func _enter_recovery(text: String, reveal: bool = true) -> void:
 
 
 func _win() -> void:
+	# Damage lands BEFORE any label or pose work: a counter that kills has to read as
+	# FIGHT WON, not as the per-cycle WIN, and _win_fight owns the screen once it fires.
+	# enrage = false: countering is the safe verb, it must never arm Vengeful.
+	_damage_enemy(counter_damage, false)
+	if enemy_hp_left <= 0:
+		return   # killing blow: _win_fight already stopped the cue, flashed and set the label
 	# Visual feedback only (no third audio cue): flash + label + staggered pose.
 	windup_player.stop()   # counter succeeded mid-windup; cut the rising tone
 	flash = 1.0
@@ -373,6 +394,8 @@ func _load_tuning() -> void:
 	windup_color_amount = 1.0
 	windup_lean_amount = 1.0
 	enemy_hp = 3
+	counter_damage = 1
+	attack_damage = 1
 	player_attack_recovery = 1.0
 	vengeful_duration = 2.5
 	vengeful_telegraph_multiplier = 0.6
@@ -395,6 +418,9 @@ func _load_tuning() -> void:
 	windup_color_amount = clampf(_num(data, "windup_color_amount", windup_color_amount), 0.0, 1.0)
 	windup_lean_amount = maxf(0.0, _num(data, "windup_lean_amount", windup_lean_amount))
 	enemy_hp = maxi(1, int(_num(data, "enemy_hp", float(enemy_hp))))
+	# floored at 0, not 1: "this verb deals no damage" is a legitimate experiment.
+	counter_damage = maxi(0, int(_num(data, "counter_damage", float(counter_damage))))
+	attack_damage = maxi(0, int(_num(data, "attack_damage", float(attack_damage))))
 	player_attack_recovery = maxf(0.0, _num(data, "player_attack_recovery", player_attack_recovery))
 	vengeful_duration = maxf(0.0, _num(data, "vengeful_duration", vengeful_duration))
 	# never 0: it divides pitch_scale and anchors the counter window.
@@ -596,4 +622,4 @@ func _update_info_label() -> void:
 	var vw: float = minf(counter_window, vt)
 	var seed_txt: String = "random" if seed_value <= 0 else str(seed_value)
 	var venge_txt: String = (">>> VENGEFUL  %.1f s left <<<" % vengeful_left) if vengeful_left > 0.0 else ""
-	info_label.text = "telegraph_length: %.2f s\ncounter_window:  %.2f s\ncamera_distance: %.1f\nwindup_color_amount: %.2f\nwindup_lean_amount:  %.2f\nenemy_hp: %d   (left: %d)\nplayer_attack_recovery: %.2f s\nvengeful_duration: %.2f s\nvengeful_telegraph_multiplier: %.2f\nseed: %s\ncounter window: %.2f-%.2f s of windup   (vengeful: %.2f-%.2f)\n%s\nSPACE = counter A   K = counter B   J = attack   R = reload" % [telegraph_length, counter_window, camera_distance, windup_color_amount, windup_lean_amount, enemy_hp, enemy_hp_left, player_attack_recovery, vengeful_duration, vengeful_telegraph_multiplier, seed_txt, opens, telegraph_length, vt - vw, vt, venge_txt]
+	info_label.text = "telegraph_length: %.2f s\ncounter_window:  %.2f s\ncamera_distance: %.1f\nwindup_color_amount: %.2f\nwindup_lean_amount:  %.2f\nenemy_hp: %d   (left: %d)\ncounter_damage: %d   attack_damage: %d\nplayer_attack_recovery: %.2f s\nvengeful_duration: %.2f s\nvengeful_telegraph_multiplier: %.2f\nseed: %s\ncounter window: %.2f-%.2f s of windup   (vengeful: %.2f-%.2f)\n%s\nSPACE = counter A   K = counter B   J = attack   R = reload" % [telegraph_length, counter_window, camera_distance, windup_color_amount, windup_lean_amount, enemy_hp, enemy_hp_left, counter_damage, attack_damage, player_attack_recovery, vengeful_duration, vengeful_telegraph_multiplier, seed_txt, opens, telegraph_length, vt - vw, vt, venge_txt]
