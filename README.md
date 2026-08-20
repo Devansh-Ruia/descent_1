@@ -22,7 +22,7 @@ counter. You are judging:
    - **K** - counter attack B.
    - **J** - attack the enemy.
    - **R** - reload `tuning.json` live (also re-applies the camera distance, the
-     seed, and refills the enemy's HP).
+	 seed, and refills the enemy's HP).
 
    Forced choice: each counter only beats its own attack. Press the wrong one,
    mistime it, or do nothing and the strike lands = LOSE.
