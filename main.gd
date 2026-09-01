@@ -439,7 +439,7 @@ func _load_tuning() -> void:
 	camera_distance = 8.0
 	windup_color_amount = 1.0
 	windup_lean_amount = 1.0
-	enemy_hp = 3
+	enemy_hp = 6   # must track the declaration: this block overwrites it before anything reads it
 	counter_damage = 1
 	attack_damage = 1
 	player_attack_recovery = 1.0

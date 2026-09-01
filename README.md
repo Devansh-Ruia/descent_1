@@ -55,7 +55,7 @@ blocked J is eaten outright and does not refresh the lockout, so mashing cannot
 trap you in permanent recovery either. That is the trade this phase exists to
 test: every swing you throw buys damage with a full second of no defense.
 
-The enemy has `enemy_hp` HP (default 3). A landed **J** takes off
+The enemy has `enemy_hp` HP (default 6). A landed **J** takes off
 `attack_damage`, a successful counter takes off `counter_damage`, both default
 `1`. The blow that empties the bar ends the fight: the label reads **FIGHT WON**,
 holds through the usual recovery beat, then the enemy refills and the loop
@@ -91,16 +91,20 @@ for a wind-up you then misread is a loss, and a whole fight of waiting is a figh
 you spend inside the enemy's tempo.
 
 You still die to a single enemy hit, and **dying resets the fight**: the enemy
-comes back at full HP and no longer vengeful. Otherwise trading your life for one
-hit would be strictly profitable, and the fastest route to FIGHT WON would be to
-die twice on purpose. That asymmetry is deliberate: the enemy needs six of
-yours, you need one of its. FIGHT WON and **R** reset the same way, so a fresh
-fight never starts with a rage window still running.
+comes back at full HP and no longer vengeful. What it does **not** reset is your
+position in the sequence. The pattern keeps running across deaths, so dying never
+buys you a free re-sync on it (see **Methodical** below). Otherwise trading your
+life for one hit would be strictly profitable, and the fastest route to FIGHT WON
+would be to die twice on purpose. That asymmetry is deliberate: the enemy needs
+six of yours, you need one of its. FIGHT WON resets HP and the rage window the
+same way, so a fresh fight never starts with a short telegraph. **R** goes
+further: it re-reads `tuning.json`, so it also restarts the sequence from the top
+along with the RNG.
 
 ## Vengeful
 
-The first trait, and the only one. Vengeful is a constraint, not a behaviour
-pattern: it does not learn, adapt, or read you.
+The first trait. Vengeful is a constraint, not a behaviour pattern: it does not
+learn, adapt, or read you.
 
 - **Trigger.** Deterministic, and it is your **swing** that does it. Every landed
   **J** sets `vengeful_left = vengeful_duration`. There is no roll and no
