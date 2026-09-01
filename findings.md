@@ -17,3 +17,8 @@ Conclusion: "stop attacking" had no answer but no, so the decision under test di
 Phase 2.1 (test_9): J was never pressed once, VENGEFUL never lit across all 56 sampled seconds. Counter-only: 6 deaths, 2 fight wins.
 The counter lane is not the "near-zero risk" the model predicted, deaths came from misreading A vs B, not from mistiming.
 Open: deaths-per-win for the aggressive line is UNMEASURED, the only aggressive data (test_8, 0 deaths : 3 wins) is from the pre-fix build and measures the exploit, not the game. One session opening with J is required before any tuning decision.
+
+## 5. Arbitration: the retaliation is off-sequence and the sequence never rewinds.
+Phase 3 shipped Methodical (fixed `"AABAB"` order, 0.55 s guard beat in IDLE) with the rule that Vengeful's retaliation is a coin flip that never advances the position, while `seq_index` advances the instant a sequence wind-up begins and is never rolled back, so cancelling one with J burns that step permanently.
+`"restart"` (zero the position at the retaliation) ships as a tuning alternative, not the default: charging the whole pattern for one swing is a bigger tax than the phase is trying to measure, and `"next"` already makes swinging cost a step.
+Open: whether the player ever holds back a swing SPECIFICALLY to keep tracking the sequence is UNMEASURED. Reviewed against Godot 4 conventions only, no Godot binary on this machine, so the guard beat and the handoff have not been seen running.

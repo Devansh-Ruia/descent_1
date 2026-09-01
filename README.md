@@ -1,8 +1,9 @@
-# Descent - Phase 2: the first trait
+# Descent - Phase 3: the first pattern trait
 
 Not a game. This is a decision test built on the Phase 0 readability test: a bare
 room, one enemy that telegraphs one of two attacks each cycle, two counters, and
-now one attack of your own. You read which attack is winding up and press its
+one attack of your own. The A/B order is no longer a coin flip: it is a fixed
+repeating sequence, and there is a visible beat before every one of them. You read which attack is winding up and press its
 counter. You are judging:
 
 1. Can you tell attack **A**'s wind-up from attack **B**'s in time to choose?
@@ -11,6 +12,8 @@ counter. You are judging:
 3. Does hitting the enemy feel like it costs you something?
 4. Both verbs deal damage now. Do you ever *choose* the slow safe one, or is one
    of the two strictly better?
+5. The order is learnable by watching. Do you ever hold back a swing
+   *specifically* to keep tracking the sequence?
 
 ## How to run
 
@@ -75,7 +78,7 @@ choice between them is a real one:
   defense first and it **never enrages the enemy**: no pose, no rage window, no
   shortened telegraph. What limits it is that you do not control the clock. You
   can only counter an attack the enemy chose to throw, and it chooses on a
-  jittered `0.6-1.6` s idle gap plus a 1.2 s telegraph.
+  `0.55-0.75` s guard beat plus a 1.2 s telegraph.
 
 The enrage is a property of the **source** of the damage, not of taking damage,
 which is why it lives at the two call sites rather than inside the shared damage
@@ -90,7 +93,7 @@ you spend inside the enemy's tempo.
 You still die to a single enemy hit, and **dying resets the fight**: the enemy
 comes back at full HP and no longer vengeful. Otherwise trading your life for one
 hit would be strictly profitable, and the fastest route to FIGHT WON would be to
-die twice on purpose. That asymmetry is deliberate: the enemy needs three of
+die twice on purpose. That asymmetry is deliberate: the enemy needs six of
 yours, you need one of its. FIGHT WON and **R** reset the same way, so a fresh
 fight never starts with a rage window still running.
 
@@ -112,7 +115,9 @@ pattern: it does not learn, adapt, or read you.
   0.12 s and animates back down over the last 0.2 s of the pose, so both the
   entry and the exit are visible events.
 - **The retaliation.** The pose does not return to idle. It goes **straight into
-  a wind-up**, so getting hit buys the enemy a turn. At the shipped values the
+  a wind-up**, so getting hit buys the enemy a turn. It skips IDLE, which means
+  it skips the **guard beat** as well: that missing beat is how you see, at a
+  glance, that this attack is off-sequence (see **Methodical** below). At the shipped values the
   sequence after your hit is fixed: 0.9 s of rising and trembling, then a 0.72 s
   wind-up, so the strike commits 1.62 s after you connect and the counter window
   is `[1.27, 1.62]`. No idle gap and no jitter, because the whole point is that
@@ -158,10 +163,74 @@ second, non-visual signal that the telegraph shortened. Tradeoff:
 deeper as `telegraph_length` grows. Switch to in-engine synthesis if that drift
 is ever unwanted.
 
+## Methodical
+
+The second trait, and the first *pattern* one. Methodical does not learn, adapt
+or read you either. It just refuses to be random.
+
+- **The sequence.** The A/B order is fixed and repeating, read from
+  `methodical_sequence` (default `"AABAB"`). It loops forever: A, A, B, A, B, A,
+  A, B, A, B... Nothing else about the attack changes, so **SPACE beats A, K
+  beats B** exactly as before. What changes is that the next attack is knowable
+  before the wind-up starts, if you have been counting.
+- **The reset beat.** Every sequence attack is preceded by a visible beat: the
+  enemy squares up, rolling side to side and settling level over
+  `methodical_reset_time` (default 0.55 s). This is the existing IDLE state, not
+  a new one, and the idle gap is now that beat plus at most 0.20 s of jitter. So
+  the beat always finishes before the wind-up starts, and the rhythm is never a
+  metronome.
+- **Why the roll axis.** The square-up is a damped roll: side to side, settling
+  to level. Nothing else in the game uses that axis. A rears back and tips away,
+  B crouches and squashes, Vengeful rises tall and trembles sideways. The guard
+  beat is the only motion on the roll, so it cannot be mistaken for a wind-up and
+  it cannot bait a counter.
+- **What it is for.** It gives the sequence a punctuation mark. Without a beat
+  between attacks you are counting invisible events; with one, each attack is
+  visibly step N of something.
+- **The HUD does not print it.** `methodical_sequence` is deliberately kept off
+  the info block, along with the current position in it and the next attack.
+  Printing any of them would hand back the lookup table the trait exists to make
+  you earn. The only ground truth is the post-cycle A/B letter on the result
+  label, which is how you learn the sequence: by watching, one cycle at a time.
+
+## Arbitration: which system picks the next attack
+
+Two traits now want to choose the same thing, so the rule between them is
+explicit. All five parts of it:
+
+1. **Vengeful is unchanged.** It still fires deterministically on a landed **J**
+   hit, and it still shortens the next telegraph by
+   `vengeful_telegraph_multiplier`. The counter window keeps its size.
+2. **The retaliation is off-sequence.** It is a fresh coin flip, not the next
+   step. You provoked it, so it is not part of the pattern you were tracking and
+   it is not predictable from that pattern either.
+3. **The retaliation does not advance the sequence, but interrupting one does.**
+   With `methodical_resume` at its default `"next"`, the position advances the
+   moment a *sequence* wind-up **begins**, and it is never rolled back. Cancel
+   that wind-up with **J** and the step is still consumed: that attack never
+   replays, and you have lost a step of the pattern you were counting. Landing a
+   hit during the guard beat, when no wind-up is in flight, consumes no step.
+   Both of those are intended, not bugs.
+4. **`"restart"` is the harsh alternative.** Set `methodical_resume` to
+   `"restart"` and the position is zeroed at the retaliation, so enraging the
+   enemy throws away *all* positional knowledge and the sequence starts over from
+   the top. `"next"` charges you one step for a swing; `"restart"` charges you
+   the whole read.
+5. **The handoff is visible.** The retaliation comes straight out of the vengeful
+   pose with **no guard beat**, and every sequence attack is preceded by one. So
+   you can always tell which system is speaking: beat then wind-up = the
+   sequence, tremble then wind-up = the retaliation. The two impulses never
+   blend.
+
+The short version: **swinging costs you the read.** It already cost your defense
+for `player_attack_recovery` seconds and bought an attack you cannot cancel. Now
+it also spends a step of the pattern and inserts an unpredictable attack in the
+middle of it.
+
 ## Tuning
 
-Edit `tuning.json` at the repo root. Eleven keys, all numbers, plus one
-optional twelfth (`seed`):
+Edit `tuning.json` at the repo root. Fourteen keys, twelve numbers and two
+strings, plus one optional fifteenth (`seed`):
 
 ```json
 {
@@ -170,12 +239,15 @@ optional twelfth (`seed`):
   "camera_distance": 8.0,
   "windup_color_amount": 0.0,
   "windup_lean_amount": 2.0,
-  "enemy_hp": 3,
+  "enemy_hp": 6,
   "counter_damage": 1,
   "attack_damage": 1,
   "player_attack_recovery": 1.0,
   "vengeful_duration": 2.5,
-  "vengeful_telegraph_multiplier": 0.6
+  "vengeful_telegraph_multiplier": 0.6,
+  "methodical_sequence": "AABAB",
+  "methodical_reset_time": 0.55,
+  "methodical_resume": "next"
 }
 ```
 
@@ -198,7 +270,9 @@ optional twelfth (`seed`):
   and collapses the test. Each strike lunge starts from its scaled wind-up pose,
   so there is no pop when you change it.
 - `enemy_hp` - integer `>= 1`, HP the enemy starts each fight with. Clamped up to
-  1 (a 0-HP enemy would end the fight on the first frame you touched it).
+  1 (a 0-HP enemy would end the fight on the first frame you touched it). Shipped
+  at `6`, raised from `3` in Phase 3: a fight has to outlast one full pass of the
+  sequence or there is nothing to learn inside it.
 - `counter_damage` - integer `>= 0`, HP a successful counter takes off. Floored
   at `0`, not at `1`, because "this verb deals no damage" is a legitimate
   experiment: set it to `0` to get the old behaviour back, where countering only
@@ -221,6 +295,21 @@ optional twelfth (`seed`):
   multiplied by while vengeful. `1.0` = no speed-up, `0.6` = the wind-up is 40%
   shorter. Clamped to `0.05` at the bottom, never `0`, because it divides the
   audio `pitch_scale` and anchors the counter window.
+- `methodical_sequence` - **string**. The repeating A/B order, default `"AABAB"`.
+  Case-insensitive, and any character that is not an `A` or a `B` is ignored, so
+  `"aabab"` and `"A-A-B-A-B"` parse identically. Parsed once at load, never per
+  cycle. If it parses to nothing (empty string, `"xyz"`, wrong type, key missing)
+  it falls back to `"AABAB"`, because a sequence of no attacks is not a pattern
+  and every read of it would be out of range. Length is free: `"AB"` is a
+  two-beat alternation, `"AAAB"` is a four-beat one with a tell at the end.
+- `methodical_reset_time` - float `>= 0`, seconds of the guard beat that precedes
+  every sequence attack, default `0.55`. The idle gap is this plus at most 0.20 s
+  of jitter, so raising it slows the whole loop down. At `0.0` the beat vanishes
+  and the sequence runs with no punctuation, which is the clean A/B test for
+  whether the beat is doing anything.
+- `methodical_resume` - **string**, `"next"` (default) or `"restart"`. Where the
+  sequence picks up after a retaliation. See **Arbitration** above. Any other
+  value, or the wrong type, falls back to `"next"`.
 - `seed` - **optional**. Integer seed for the RNG that drives the A/B pick each
   cycle and the idle-gap jitter. Leave the key out (or set it `<= 0`) and every
   run randomizes, which is the default. Set it to a positive integer to replay
@@ -231,9 +320,10 @@ optional twelfth (`seed`):
 Save the file, then press **R** in-game to apply them live. The HUD shows the
 current values, the enemy's remaining HP, both damage numbers, the resolved
 counter window for both a normal and a vengeful wind-up, and a `VENGEFUL` readout while the rage window is
-open. Missing file or a bad/missing key falls back to sane defaults
-(1.2 / 0.35 / 8.0 / 1.0 / 1.0 / 3 / 1 / 1 / 1.0 / 2.5 / 0.6, seed random) and
-keeps running.
+open. It shows `methodical_reset_time` and `methodical_resume` but **never**
+`methodical_sequence`, the position in it, or the next attack. Missing file or a bad/missing key falls back to sane defaults
+(1.2 / 0.35 / 8.0 / 1.0 / 1.0 / 6 / 1 / 1 / 1.0 / 2.5 / 0.6 / "AABAB" / 0.55 /
+"next", seed random) and keeps running.
 
 Note the interaction between `counter_window` and the vengeful telegraph: the
 window is clamped to at most the whole wind-up. If you set `counter_window`
@@ -271,8 +361,8 @@ The two verbs are not symmetric, on purpose:
   bought is one you have to counter.
 - **Countering is safe.** No enrage, no shortened telegraph, no defense spent up
   front. What it costs is control of the clock: you can only counter an attack
-  the enemy chose to throw, on a `0.6-1.6` s jittered idle gap plus a 1.2 s
-  telegraph. The jitter is what rate-limits the counter path, not a damage
+  the enemy chose to throw, on a `0.55-0.75` s guard beat plus a 1.2 s
+  telegraph. The guard beat is what rate-limits the counter path, not a damage
   penalty.
 
 Land a hit at `t = 0`. The enemy rises for 0.9 s and its retaliation commits at
@@ -320,18 +410,89 @@ that retaliation, so the swing that used to cancel it now just spends your
 defense and leaves the attack standing. Mashing does not race the enemy, it feeds
 it.
 
-Every other constant (idle jitter, strike speed, recovery time, the vengeful pose
-length and shake, colors, camera angle) is hardcoded in `main.gd`, on purpose.
+### Experiment: do you ever hold back a swing to keep the read?
+
+This is the question Phase 3 exists to answer, and it is the Phase 2 dilemma with
+one more thing on the scale. Swinging already cost you a second of defense and
+bought an attack you cannot cancel. Now it also costs you a step of the sequence:
+the wind-up you cancelled is consumed and never replays, and the retaliation you
+get instead is a coin flip that tells you nothing about where the pattern is.
+
+Play several fights at the shipped values and judge by hand:
+
+1. **Can you learn the sequence by watching?** Do not read it out of
+   `tuning.json` first, that defeats the test. Play with the A/B letter on the
+   result label and see whether you start pre-committing to a counter before the
+   pose is readable. If you never do, either the sequence is too long, the fight
+   is too short at `enemy_hp` 6, or the guard beat is not punctuating clearly
+   enough to count against.
+2. **Do you ever hold back a swing specifically to keep tracking it?** Not
+   because you fear the retaliation, that was Phase 2. Because you know where you
+   are in the pattern and swinging would throw that away. If the answer is never,
+   the read is not worth enough: try `methodical_resume: "restart"`, which raises
+   the price of one swing from a step to the whole pattern.
+3. **Is the guard beat legible?** It should read as the enemy planting its feet
+   and squaring up, distinct from A's rear-back, B's crouch and Vengeful's
+   trembling rise. If it reads as a fourth wind-up you should be countering, the
+   pose is wrong, not the timing.
+4. **Is the handoff visible?** After you land a hit, the retaliation should
+   arrive with no guard beat at all, and the next sequence attack after it should
+   have one again. If you cannot see that difference, the arbitration rule is
+   invisible and the trait is just noise.
+
+The honest failure mode: if you can play the whole fight without ever counting,
+the sequence is decoration. Either the guard beat is not marking the steps, or
+0.55 s is too short to register as a beat, or `enemy_hp` 6 still is not long
+enough to see `"AABAB"` come around twice.
+
+Every other constant (idle jitter, strike speed, recovery time, the guard-beat
+roll and damping, the vengeful pose length and shake, colors, camera angle) is
+hardcoded in `main.gd`, on purpose.
 
 ## Verification
 
-The machine this was written on has no Godot binary, so **everything in Phase 2
-is reviewed against Godot 4 conventions and is not runtime-confirmed**. That
-includes both of the fixes on this page: the **J** whiff on vengeful wind-ups and
-counter damage. Nothing below has been seen or heard running. Verify by hand in
-the editor:
+The machine this was written on has no Godot binary, so **everything in Phases 2
+and 3 is reviewed against Godot 4 conventions and is not runtime-confirmed**.
+That includes all of Methodical, the guard beat and the arbitration rule, as well
+as the two Phase 2 fixes: the **J** whiff on vengeful wind-ups and counter
+damage. Nothing below has been seen or heard running. Verify by hand in the
+editor:
 
-The four that matter most, because both fixes hang off them:
+Phase 3 (Methodical + arbitration), the four that matter most:
+
+- **The sequence is learnable by watching.** Play without opening `tuning.json`
+  and confirm the A/B letters on the result label repeat in a fixed order, and
+  that you can eventually call the next one. Nothing in the HUD should have told
+  you the order.
+- **The guard square-up is visible and distinct.** It rolls side to side and
+  settles level before every sequence attack, and it does not look like A, like
+  B, or like the vengeful rise. Check it at `windup_color_amount` `0.0`, where
+  the pose is all there is. No roll should leak into the wind-up, the strike, the
+  vengeful pose or the recovery hold.
+- **The retaliation visibly interrupts and hands back.** Land a hit and confirm
+  the retaliation arrives out of the vengeful pose with **no** guard beat, and
+  that the next sequence attack after it does have one. The two should never
+  blend into one motion.
+- **Swinging measurably costs the read.** Note where you are in the sequence,
+  cancel a wind-up with **J**, and confirm the step you cancelled does not come
+  back: after the retaliation the sequence resumes at the step *after* the one
+  you interrupted. Then set `methodical_resume` to `"restart"`, press **R**, and
+  confirm it instead resumes from the top.
+
+Also for Phase 3:
+
+- The retaliation's A/B is a coin flip, not the next sequence step: hit the enemy
+  at the same position several times and confirm the retaliation letter varies.
+- Landing a hit during the guard beat, with no wind-up in flight, costs no step:
+  the sequence resumes exactly where it was.
+- Set `methodical_sequence` to `""`, to `"zzz"`, or to a number, press **R**, and
+  the game keeps running on `"AABAB"` rather than erroring. Set it to `"AB"` and
+  confirm the shorter loop takes effect immediately without an index error.
+- Set `methodical_reset_time` to `0.0` and the guard beat disappears while the
+  sequence keeps running; raise it to `1.5` and the whole loop slows down.
+- Six hits, in any mix of verbs, produce **FIGHT WON**.
+
+The four that matter most in Phase 2, because both fixes hang off them:
 
 - **J** whiffs during a vengeful wind-up and your recovery is still paid for the
   whiff, and **J** still cancels a normal wind-up exactly as before.
@@ -356,15 +517,15 @@ Phase 2 (player offense + Vengeful):
   press, and a blocked counter does not consume the cycle's one counter attempt
   (you can still counter later in the same wind-up). Mashing J does not extend
   the lockout.
-- Three hits produce **FIGHT WON**, it holds for the recovery beat, and the enemy
+- Six hits produce **FIGHT WON**, it holds for the recovery beat, and the enemy
   comes back at full HP. The HUD's `left:` count matches what you have landed,
   and pressing J during the FIGHT WON hold does nothing.
 - A successful counter takes `counter_damage` off the HUD's `left:` count, and
   the enemy does **not** go vengeful from it: no rise, no tremble, no `VENGEFUL`
-  readout, and the next wind-up is full length. Counter three times in a row and
+  readout, and the next wind-up is full length. Counter six times in a row and
   the fight ends without the enemy ever being enraged.
-- Mix the verbs: swing once, counter twice, and confirm the fight still ends at
-  three and the FIGHT WON hold looks the same whichever verb landed last.
+- Mix the verbs: swing twice, counter four times, and confirm the fight still
+  ends at six and the FIGHT WON hold looks the same whichever verb landed last.
 - Set `counter_damage` to `0`, press **R**, and countering goes back to cancelling
   the attack without advancing the fight. Set `attack_damage` to `0` and a swing
   still enrages the enemy while buying nothing. Both are experiments, not
@@ -405,9 +566,10 @@ Phase 0/1 (should be unchanged):
 - Timing is identical between A and B: same `telegraph_length`, same counter
   window, same strike speed, same commit point. Only the post-commit lunge path
   differs, and that is after the window has closed.
-- With no `seed` key the A/B order differs between runs, and adding
-  `"seed": 20260726` replays the same order: note the sequence, press **R**, and
-  confirm it repeats from the start.
+- The A/B order is no longer driven by the RNG, so `seed` now only controls the
+  idle-gap jitter and the retaliation's coin flip. With no `seed` key those
+  differ between runs; adding `"seed": 20260726` replays them. The sequence
+  itself repeats regardless of the seed, which is the point.
 - Audio is unchanged: one wind-up cue for both attacks, the hit cue only on a
   loss, silence on a win.
 - The result label reveals the attack letter only during recovery, never during
