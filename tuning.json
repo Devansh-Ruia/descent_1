@@ -11,5 +11,6 @@
   "vengeful_duration": 2.5,
   "vengeful_telegraph_multiplier": 0.6,
   "methodical_sequence": "AABAB",
-  "methodical_reset_time": 0.55
+  "methodical_reset_time": 0.55,
+  "methodical_resume": "next"
 }

@@ -26,6 +26,7 @@ var player_attack_recovery: float = 1.0    # seconds your own swing leaves you u
 var vengeful_duration: float = 2.5         # how long a hit keeps the enemy vengeful
 var vengeful_telegraph_multiplier: float = 0.6   # telegraph scale while vengeful; window size is untouched
 var methodical_reset_time: float = 0.55    # length of the guard beat that precedes every sequence attack
+var methodical_resume: String = "next"     # where the sequence picks up after a retaliation: "next" | "restart"
 const SEQUENCE_DEFAULT := "AABAB"          # parsed when the key is missing, or when it parses to nothing
 var sequence: Array[int] = []      # methodical_sequence as AttackType values; NEVER empty at runtime
 var seed_value: int = 0            # RNG seed for the A/B order + idle jitter; <= 0 = random per run
@@ -331,10 +332,14 @@ func _enter_windup() -> void:
 	eff_telegraph = telegraph_length
 	if vengeful_cycle:
 		eff_telegraph = telegraph_length * vengeful_telegraph_multiplier
-		# The retaliation is OFF-sequence: a fresh coin flip, and seq_index does not move.
+		# The retaliation is OFF-sequence: a fresh coin flip, and it never advances seq_index.
 		# You provoked this one, so it is not a step of the pattern you were tracking, and it
 		# must not be predictable from that pattern either.
 		attack = AttackType.A if rng.randf() < 0.5 else AttackType.B
+		if methodical_resume == "restart":
+			# The harsh arbitration: enraging it throws away all positional knowledge, so the
+			# sequence resumes from the top instead of from where you interrupted it.
+			seq_index = 0
 	else:
 		# Methodical: the order is fixed and it is the whole read. seq_index advances the
 		# moment a sequence wind-up BEGINS and is never rolled back, so cancelling this one
@@ -441,6 +446,7 @@ func _load_tuning() -> void:
 	vengeful_duration = 2.5
 	vengeful_telegraph_multiplier = 0.6
 	methodical_reset_time = 0.55
+	methodical_resume = "next"
 	sequence = _parse_sequence(SEQUENCE_DEFAULT)
 	seq_index = 0
 	seed_value = 0
@@ -470,6 +476,8 @@ func _load_tuning() -> void:
 	# never 0: it divides pitch_scale and anchors the counter window.
 	vengeful_telegraph_multiplier = clampf(_num(data, "vengeful_telegraph_multiplier", vengeful_telegraph_multiplier), 0.05, 1.0)
 	methodical_reset_time = maxf(0.0, _num(data, "methodical_reset_time", methodical_reset_time))
+	# Only "restart" opts into the harsh rule; a typo or a bad type lands on the default.
+	methodical_resume = "restart" if _str(data, "methodical_resume", methodical_resume) == "restart" else "next"
 	sequence = _parse_sequence(_str(data, "methodical_sequence", SEQUENCE_DEFAULT))
 	if sequence.is_empty():
 		sequence = _parse_sequence(SEQUENCE_DEFAULT)   # a sequence of no attacks is not a pattern
@@ -690,4 +698,7 @@ func _update_info_label() -> void:
 	var vw: float = minf(counter_window, vt)
 	var seed_txt: String = "random" if seed_value <= 0 else str(seed_value)
 	var venge_txt: String = (">>> VENGEFUL  %.1f s left <<<" % vengeful_left) if vengeful_left > 0.0 else ""
-	info_label.text = "telegraph_length: %.2f s\ncounter_window:  %.2f s\ncamera_distance: %.1f\nwindup_color_amount: %.2f\nwindup_lean_amount:  %.2f\nenemy_hp: %d   (left: %d)\ncounter_damage: %d   attack_damage: %d\nplayer_attack_recovery: %.2f s\nvengeful_duration: %.2f s\nvengeful_telegraph_multiplier: %.2f\nseed: %s\ncounter window: %.2f-%.2f s of windup   (vengeful: %.2f-%.2f)\n%s\nSPACE = counter A   K = counter B   J = attack   R = reload" % [telegraph_length, counter_window, camera_distance, windup_color_amount, windup_lean_amount, enemy_hp, enemy_hp_left, counter_damage, attack_damage, player_attack_recovery, vengeful_duration, vengeful_telegraph_multiplier, seed_txt, opens, telegraph_length, vt - vw, vt, venge_txt]
+	# `methodical_sequence`, `sequence` and `seq_index` are DELIBERATELY absent. Printing any
+	# of them would hand back the lookup table this whole trait exists to make you earn by
+	# watching. The post-cycle A/B reveal on the result label is the only ground truth.
+	info_label.text = "telegraph_length: %.2f s\ncounter_window:  %.2f s\ncamera_distance: %.1f\nwindup_color_amount: %.2f\nwindup_lean_amount:  %.2f\nenemy_hp: %d   (left: %d)\ncounter_damage: %d   attack_damage: %d\nplayer_attack_recovery: %.2f s\nvengeful_duration: %.2f s\nvengeful_telegraph_multiplier: %.2f\nmethodical_reset_time: %.2f s   methodical_resume: %s\nseed: %s\ncounter window: %.2f-%.2f s of windup   (vengeful: %.2f-%.2f)\n%s\nSPACE = counter A   K = counter B   J = attack   R = reload" % [telegraph_length, counter_window, camera_distance, windup_color_amount, windup_lean_amount, enemy_hp, enemy_hp_left, counter_damage, attack_damage, player_attack_recovery, vengeful_duration, vengeful_telegraph_multiplier, methodical_reset_time, methodical_resume, seed_txt, opens, telegraph_length, vt - vw, vt, venge_txt]
