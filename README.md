@@ -3,8 +3,8 @@
 Not a game. This is a decision test built on the Phase 0 readability test: a bare
 room, one enemy that telegraphs one of two attacks each cycle, two counters, and
 one attack of your own. The A/B order is no longer a coin flip: it is a fixed
-repeating sequence, and there is a visible beat before every one of them. You read which attack is winding up and press its
-counter. You are judging:
+repeating sequence, and there is a visible beat before every one of them. You
+read which attack is winding up and press its counter. You are judging:
 
 1. Can you tell attack **A**'s wind-up from attack **B**'s in time to choose?
 2. Does landing the right counter feel like a **read**, not a guess between two
@@ -27,7 +27,7 @@ counter. You are judging:
    - **K** - counter attack B.
    - **J** - attack the enemy.
    - **R** - reload `tuning.json` live (also re-applies the camera distance, the
-	 seed, and refills the enemy's HP).
+	 seed, refills the enemy's HP, and restarts the sequence from step one).
 
    Forced choice: each counter only beats its own attack. Press the wrong one,
    mistime it, or do nothing and the strike lands = LOSE.
@@ -90,16 +90,15 @@ You still die to a single enemy hit, so the safe verb is not free either. Waitin
 for a wind-up you then misread is a loss, and a whole fight of waiting is a fight
 you spend inside the enemy's tempo.
 
-You still die to a single enemy hit, and **dying resets the fight**: the enemy
-comes back at full HP and no longer vengeful. What it does **not** reset is your
-position in the sequence. The pattern keeps running across deaths, so dying never
-buys you a free re-sync on it (see **Methodical** below). Otherwise trading your
-life for one hit would be strictly profitable, and the fastest route to FIGHT WON
-would be to die twice on purpose. That asymmetry is deliberate: the enemy needs
-six of yours, you need one of its. FIGHT WON resets HP and the rage window the
-same way, so a fresh fight never starts with a short telegraph. **R** goes
-further: it re-reads `tuning.json`, so it also restarts the sequence from the top
-along with the RNG.
+**Dying resets the fight**: the enemy comes back at full HP and no longer
+vengeful. What it does **not** reset is your position in the sequence. The
+pattern keeps running across deaths, so dying never buys you a free re-sync on it
+(see **Methodical** below). Otherwise trading your life for one hit would be
+strictly profitable, and the fastest route to FIGHT WON would be to die twice on
+purpose. That asymmetry is deliberate: the enemy needs six of yours, you need one
+of its. FIGHT WON resets HP and the rage window the same way, so a fresh fight
+never starts with a short telegraph. **R** goes further: it re-reads
+`tuning.json`, so it also restarts the sequence from the top along with the RNG.
 
 ## Vengeful
 
@@ -121,11 +120,11 @@ learn, adapt, or read you.
 - **The retaliation.** The pose does not return to idle. It goes **straight into
   a wind-up**, so getting hit buys the enemy a turn. It skips IDLE, which means
   it skips the **guard beat** as well: that missing beat is how you see, at a
-  glance, that this attack is off-sequence (see **Methodical** below). At the shipped values the
-  sequence after your hit is fixed: 0.9 s of rising and trembling, then a 0.72 s
-  wind-up, so the strike commits 1.62 s after you connect and the counter window
-  is `[1.27, 1.62]`. No idle gap and no jitter, because the whole point is that
-  you can learn this timing.
+  glance, that this attack is off-sequence (see **Methodical** below). At the
+  shipped values the sequence after your hit is fixed: 0.9 s of rising and
+  trembling, then a 0.72 s wind-up, so the strike commits 1.62 s after you
+  connect and the counter window is `[1.27, 1.62]`. No idle gap and no jitter,
+  because the whole point is that you can learn this timing.
 - **The effect.** An attack that *begins* while the rage window is open telegraphs
   at `telegraph_length * vengeful_telegraph_multiplier` (default 0.6, so 1.2 s
   becomes 0.72 s). The **counter window keeps its size**: it is still
@@ -325,9 +324,17 @@ Save the file, then press **R** in-game to apply them live. The HUD shows the
 current values, the enemy's remaining HP, both damage numbers, the resolved
 counter window for both a normal and a vengeful wind-up, and a `VENGEFUL` readout while the rage window is
 open. It shows `methodical_reset_time` and `methodical_resume` but **never**
-`methodical_sequence`, the position in it, or the next attack. Missing file or a bad/missing key falls back to sane defaults
-(1.2 / 0.35 / 8.0 / 1.0 / 1.0 / 6 / 1 / 1 / 1.0 / 2.5 / 0.6 / "AABAB" / 0.55 /
-"next", seed random) and keeps running.
+`methodical_sequence`, the position in it, or the next attack. Missing file or a
+bad/missing key falls back to sane defaults (1.2 / 0.35 / 8.0 / 1.0 / 1.0 / 6 /
+1 / 1 / 1.0 / 2.5 / 0.6 / "AABAB" / 0.55 / "next", seed random) and keeps
+running.
+
+One caveat for a play session: **R** re-reads `tuning.json`, so it silently
+re-syncs the pattern to step one. Nothing on screen says so, because the HUD
+never shows the position. Tap **R** between fights to tweak a value and you have
+also reset the thing you were trying to learn, which confounds any read on
+whether the sequence is learnable *across* fights. Finish a measurement run
+before you touch it.
 
 Note the interaction between `counter_window` and the vengeful telegraph: the
 window is clamped to at most the whole wind-up. If you set `counter_window`
