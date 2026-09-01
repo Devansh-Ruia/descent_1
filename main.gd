@@ -1,8 +1,12 @@
 extends Node3D
-# Descent - Phase 2 decision prototype.
+# Descent - Phase 3 decision prototype.
 # One enemy loops IDLE -> WINDUP -> STRIKE -> RECOVERY -> IDLE, with a VENGEFUL
 # interrupt on top: every hit you land makes it rise tall, tremble, and telegraph
 # its next attack shorter (same counter window, less time to read it).
+# Methodical: the A/B order is a fixed repeating sequence, not a coin flip, and every
+# sequence attack is preceded by a visible guard beat (the enemy squares up in IDLE).
+# The retaliation is OFF-sequence - a coin flip out of the vengeful pose with no guard
+# beat - so swinging costs you the read as well as your defense.
 # SPACE counters attack A, K counters attack B, both only inside the TAIL of the
 # windup. J attacks, and costs you your counter while the swing recovers. J cancels a
 # normal wind-up but WHIFFS on the retaliation: the one you provoked has to be countered.
@@ -15,17 +19,22 @@ var counter_window: float = 0.35
 var camera_distance: float = 8.0
 var windup_color_amount: float = 1.0
 var windup_lean_amount: float = 1.0
-var enemy_hp: int = 3              # HP the enemy starts each fight with
+var enemy_hp: int = 6              # HP the enemy starts each fight with
 var counter_damage: int = 1        # HP a successful counter takes off (countering never enrages)
 var attack_damage: int = 1         # HP one landed J swing takes off
 var player_attack_recovery: float = 1.0    # seconds your own swing leaves you unable to counter or swing again
 var vengeful_duration: float = 2.5         # how long a hit keeps the enemy vengeful
 var vengeful_telegraph_multiplier: float = 0.6   # telegraph scale while vengeful; window size is untouched
+var methodical_reset_time: float = 0.55    # length of the guard beat that precedes every sequence attack
+const SEQUENCE_DEFAULT := "AABAB"          # parsed when the key is missing, or when it parses to nothing
+var sequence: Array[int] = []      # methodical_sequence as AttackType values; NEVER empty at runtime
 var seed_value: int = 0            # RNG seed for the A/B order + idle jitter; <= 0 = random per run
 
 # ---- hardcoded knobs (deliberately NOT in tuning.json) ----
-const IDLE_MIN := 0.6            # idle-gap jitter range (seconds)
-const IDLE_MAX := 1.6
+const IDLE_MIN := 0.0            # idle-gap jitter ON TOP of the guard beat (seconds)
+const IDLE_MAX := 0.20           # small: the reset is a beat, not a wait, but never metronomic
+const GUARD_ROLL := 0.12         # guard beat: peak roll in radians of the square-up
+const GUARD_DAMP_HZ := 2.2       # guard beat: wobble rate; exp(-3t) is the decay envelope
 const STRIKE_DURATION := 0.20    # quick lunge
 const RECOVERY_TIME := 1.1       # holds the WIN/LOSE label, then auto-resets
 const CAM_ELEV_DEG := 30.0       # look-down angle
@@ -58,10 +67,11 @@ enum State { IDLE, WINDUP, STRIKE, RECOVERY, VENGEFUL }
 enum AttackType { A, B }
 var state: int = State.IDLE
 var attack: int                      # which attack this cycle telegraphs (A rears back, B crouches)
+var seq_index: int = 0               # position in `sequence`; advances when a SEQUENCE wind-up begins
 var state_time: float = 0.0
 var idle_gap: float = 1.0
 var counter_spent: bool = false     # one counter attempt per cycle
-var enemy_hp_left: int = 3          # refilled by _reset_fight (reload, FIGHT WON, or your death)
+var enemy_hp_left: int = 6          # refilled by _reset_fight (reload, FIGHT WON, or your death)
 var player_recovery_left: float = 0.0   # your own swing's recovery; blocks SPACE/K while > 0
 var hit_flinch: float = 0.0         # knock-back timer for a landed player hit
 var vengeful_left: float = 0.0      # rage window: an attack starting while > 0 telegraphs short
@@ -179,6 +189,14 @@ func _process(delta: float) -> void:
 
 	match state:
 		State.IDLE:
+			# Guard beat: square up on the ROLL axis and settle level, a damped wobble over
+			# methodical_reset_time. rotation.z is used by nothing else (A and B drive
+			# rotation.x, Vengeful an x tremor), so it reads as its own event - the enemy
+			# planting its feet - and can never be confused for a wind-up.
+			if state_time < methodical_reset_time:
+				enemy_root.rotation.z = GUARD_ROLL * exp(-3.0 * state_time) * cos(state_time * TAU * GUARD_DAMP_HZ)
+			else:
+				enemy_root.rotation.z = 0.0   # exactly level, not a residual fraction
 			if state_time >= idle_gap:
 				_enter_windup()
 		State.WINDUP:
@@ -200,11 +218,13 @@ func _process(delta: float) -> void:
 				# front-load onto, so the pose keeps the plain ramp.
 			if attack == AttackType.A:
 				# A: rear back and tilt away (top tips back), coiling for a lunge.
+				enemy_root.rotation.z = 0.0   # the guard beat's roll must not leak into the coil
 				enemy_root.scale = Vector3.ONE
 				enemy_root.rotation.x = lerp(0.0, WINDUP_LEAN * lean, pose_p)
 				enemy_root.position = ENEMY_BASE + Vector3(0.0, 0.0, -WINDUP_STEP_BACK * lean * pose_p)
 			else:
 				# B: crouch low in place -> squash down, tip forward, widen (feet stay planted at y=0).
+				enemy_root.rotation.z = 0.0   # the guard beat's roll must not leak into the coil
 				enemy_root.position = ENEMY_BASE
 				enemy_root.rotation.x = lerp(0.0, CROUCH_TIP_FWD * lean, pose_p)
 				var sy := maxf(0.15, 1.0 - CROUCH_SQUASH * lean * pose_p)
@@ -250,9 +270,11 @@ func _process(delta: float) -> void:
 			enemy_root.position = shake.lerp(rec_start_pos, back)
 			enemy_root.rotation.x = lerp(0.0, rec_start_rot, back)
 			if state_time >= d:
-				# Straight into the wind-up, no idle gap: it rears up and comes back at you.
-				# Returning to IDLE made attacking free: IDLE_MIN alone outlasts the player's
-				# recovery, so under sustained attack the enemy never got to telegraph once.
+				# Straight into the wind-up, no idle gap and so NO GUARD BEAT: it rears up and
+				# comes back at you. That absence is the visible handoff - a sequence attack
+				# is always preceded by the square-up, a retaliation never is. Routing this
+				# through IDLE would both add the beat and, back when the gap was 0.6-1.6 s,
+				# outlast the player's recovery so the enemy never got to telegraph at all.
 				_enter_windup()   # vengeful_left still has time on it, so this one telegraphs short
 
 	# knock-back from a landed player hit, drawn over whatever the state just posed.
@@ -266,13 +288,16 @@ func _process(delta: float) -> void:
 func _enter_idle() -> void:
 	state = State.IDLE
 	state_time = 0.0
-	idle_gap = rng.randf_range(IDLE_MIN, IDLE_MAX)
+	# The guard beat IS the idle gap, so a wind-up can never start before the square-up
+	# finishes. The jitter on top keeps the rhythm off a metronome without hiding the beat.
+	idle_gap = methodical_reset_time + rng.randf_range(IDLE_MIN, IDLE_MAX)
 	if enemy_hp_left <= 0:
 		_reset_fight()   # FIGHT WON held through recovery; refill so the human can keep testing
 	result_text = "watching"
 	enemy_mat.albedo_color = COLOR_ENEMY
 	enemy_root.position = ENEMY_BASE
 	enemy_root.rotation.x = 0.0
+	enemy_root.rotation.z = 0.0
 	enemy_root.scale = Vector3.ONE
 	_update_result_label()
 
@@ -288,25 +313,40 @@ func _enter_vengeful() -> void:
 	rec_start_pos = enemy_root.position
 	rec_start_rot = enemy_root.rotation.x
 	rec_start_scale = enemy_root.scale
+	enemy_root.rotation.z = 0.0   # J landed during the guard beat: drop the roll, do not pose with it
 	enemy_mat.albedo_color = COLOR_ENEMY   # drop any telegraph tint from the cancelled wind-up
 	result_text = "watching"
 	_update_result_label()
 
 
 func _enter_windup() -> void:
-	attack = AttackType.A if rng.randf() < 0.5 else AttackType.B
+	# Locked FIRST, before the attack pick, because the pick now branches on it. It is a pure
+	# read of vengeful_left, so hoisting it above the pick cannot change what it holds. It is
+	# locked rather than re-tested because J's whiff rule reads it at press time, and testing
+	# vengeful_left there would flicker if the rage window expired mid-wind-up.
+	vengeful_cycle = vengeful_left > 0.0
+	# Locked on the same reasoning: the telegraph this cycle uses cannot shift mid-wind-up even
+	# if the rage window expires while the enemy is already coiling. telegraph_length stays the
+	# tuning value.
+	eff_telegraph = telegraph_length
+	if vengeful_cycle:
+		eff_telegraph = telegraph_length * vengeful_telegraph_multiplier
+		# The retaliation is OFF-sequence: a fresh coin flip, and seq_index does not move.
+		# You provoked this one, so it is not a step of the pattern you were tracking, and it
+		# must not be predictable from that pattern either.
+		attack = AttackType.A if rng.randf() < 0.5 else AttackType.B
+	else:
+		# Methodical: the order is fixed and it is the whole read. seq_index advances the
+		# moment a sequence wind-up BEGINS and is never rolled back, so cancelling this one
+		# with J still burns the step - swinging costs you a step of the pattern as well as
+		# your defense. `sequence` is never empty (see _load_tuning), so both the index and
+		# the modulo are safe for any sequence length.
+		attack = sequence[seq_index]
+		seq_index = (seq_index + 1) % sequence.size()
 	# One attempt per WIND-UP, reset here rather than in _enter_idle, because a wind-up is
 	# what a cycle is and there are now two ways in. Coming out of VENGEFUL the retaliation
 	# would otherwise inherit the attempt spent on the wind-up the player just cancelled.
 	counter_spent = false
-	# Locked once, here: the telegraph this cycle uses cannot shift mid-wind-up even if the
-	# rage window expires while the enemy is already coiling. telegraph_length stays the tuning value.
-	# vengeful_cycle is locked on the same line of reasoning: J's whiff rule reads it at press
-	# time, and testing vengeful_left there would flicker if the window expired mid-wind-up.
-	vengeful_cycle = vengeful_left > 0.0
-	eff_telegraph = telegraph_length
-	if vengeful_cycle:
-		eff_telegraph = telegraph_length * vengeful_telegraph_multiplier
 	state = State.WINDUP
 	state_time = 0.0
 	if windup_player.stream != null:
@@ -328,6 +368,7 @@ func _enter_recovery(text: String, reveal: bool = true) -> void:
 	rec_start_pos = enemy_root.position
 	rec_start_rot = enemy_root.rotation.x
 	rec_start_scale = enemy_root.scale
+	enemy_root.rotation.z = 0.0   # FIGHT WON can fire from the guard beat; do not hold the roll
 	# reveal the ground-truth attack letter ONLY now (recovery); idle/windup stay "watching".
 	# reveal=false for outcomes that are not a read on this cycle's attack (FIGHT WON).
 	if reveal:
@@ -399,6 +440,9 @@ func _load_tuning() -> void:
 	player_attack_recovery = 1.0
 	vengeful_duration = 2.5
 	vengeful_telegraph_multiplier = 0.6
+	methodical_reset_time = 0.55
+	sequence = _parse_sequence(SEQUENCE_DEFAULT)
+	seq_index = 0
 	seed_value = 0
 	_apply_seed()   # same rule on the missing/bad-file fallback path
 	_reset_fight()   # R restarts the fight at full HP, same as it restarts the RNG
@@ -425,6 +469,11 @@ func _load_tuning() -> void:
 	vengeful_duration = maxf(0.0, _num(data, "vengeful_duration", vengeful_duration))
 	# never 0: it divides pitch_scale and anchors the counter window.
 	vengeful_telegraph_multiplier = clampf(_num(data, "vengeful_telegraph_multiplier", vengeful_telegraph_multiplier), 0.05, 1.0)
+	methodical_reset_time = maxf(0.0, _num(data, "methodical_reset_time", methodical_reset_time))
+	sequence = _parse_sequence(_str(data, "methodical_sequence", SEQUENCE_DEFAULT))
+	if sequence.is_empty():
+		sequence = _parse_sequence(SEQUENCE_DEFAULT)   # a sequence of no attacks is not a pattern
+	seq_index = 0   # a shorter sequence must never be indexed with a stale position
 	seed_value = int(_num(data, "seed", float(seed_value)))
 	_apply_seed()
 	_reset_fight()
@@ -442,6 +491,25 @@ func _num(d: Dictionary, key: String, fallback: float) -> float:
 	if d.has(key) and (typeof(d[key]) == TYPE_FLOAT or typeof(d[key]) == TYPE_INT):
 		return float(d[key])
 	return fallback
+
+
+func _str(d: Dictionary, key: String, fallback: String) -> String:
+	# _num's sibling: same guard shape, for the keys that are text.
+	if d.has(key) and typeof(d[key]) == TYPE_STRING:
+		return String(d[key])
+	return fallback
+
+
+func _parse_sequence(s: String) -> Array[int]:
+	# A/B case-insensitive, every other character ignored, so "aabab" and "A-A-B-A-B" both
+	# parse. Runs once at load, never per cycle. Callers must handle the empty result.
+	var out: Array[int] = []
+	for ch in s.to_upper():
+		if ch == "A":
+			out.append(AttackType.A)
+		elif ch == "B":
+			out.append(AttackType.B)
+	return out
 
 
 # ---------- world build ----------
