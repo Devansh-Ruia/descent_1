@@ -25,7 +25,7 @@ var counter_window: float = 0.35
 var camera_distance: float = 8.0
 var windup_color_amount: float = 1.0
 var windup_lean_amount: float = 1.0
-var enemy_hp: int = 6              # HP the enemy starts each fight with
+var enemy_hp: int = 9              # HP the enemy starts each fight with
 var counter_damage: int = 1        # HP a successful counter takes off (countering never enrages)
 var attack_damage: int = 1         # HP one landed J swing takes off
 var player_attack_recovery: float = 1.0    # seconds your own swing leaves you unable to counter or swing again
@@ -104,7 +104,7 @@ var idle_gap: float = 1.0
 var eff_guard_time: float = 0.55    # this cycle's guard beat, locked at _enter_idle like eff_telegraph
 var guard_beat_factor: float = 1.0  # 1.0 / this cycle's guard scale, locked with eff_guard_time; see the IDLE branch
 var counter_spent: bool = false     # one counter attempt per cycle
-var enemy_hp_left: int = 6          # refilled by _reset_fight (reload, FIGHT WON, or your death)
+var enemy_hp_left: int = 9          # refilled by _reset_fight (reload, FIGHT WON, or your death)
 var fight_over: bool = false        # terminal result hold; LOSE already refills HP, so HP alone cannot gate input
 var player_recovery_left: float = 0.0   # your own swing's recovery; blocks SPACE/K while > 0
 var hit_flinch: float = 0.0         # knock-back timer for a landed player hit
@@ -559,11 +559,11 @@ func _reset_fight() -> void:
 	# Every path that restores HP goes through here, so the rage window can't survive a
 	# reset and hand the player a shortened telegraph on the first cycle of a fresh fight.
 	# Adaptive's weights and active list are DELIBERATELY not touched: learning survives a
-	# death and a FIGHT WON. At enemy_hp 6 and threshold 3 the counter-plus-recovery-poke line
-	# takes two HP a cycle and adapts AFTER, so an adaptation forms on roughly the boundary
-	# that line ends the fight on, and clearing
-	# it here would make the feature a near no-op and make dying buy a clean slate. Same
-	# rule the sequence already follows: dying does not re-sync what you are being read on.
+	# death and a FIGHT WON. At enemy_hp 9 and threshold 3 the counter-plus-recovery-poke line
+	# takes two HP a cycle and has the enemy at 3 HP when AFTER adapts, so the adaptation
+	# bites inside the fight that taught it. Persistence still matters: clearing it here
+	# would make dying buy a clean slate. Same rule the sequence already follows: dying does
+	# not re-sync what you are being read on.
 	enemy_hp_left = enemy_hp
 	vengeful_left = 0.0
 	fight_over = false
@@ -782,7 +782,7 @@ func _load_tuning() -> void:
 	camera_distance = 8.0
 	windup_color_amount = 1.0
 	windup_lean_amount = 1.0
-	enemy_hp = 6   # must track the declaration: this block overwrites it before anything reads it
+	enemy_hp = 9   # must track the declaration: this block overwrites it before anything reads it
 	counter_damage = 1
 	attack_damage = 1
 	player_attack_recovery = 1.0

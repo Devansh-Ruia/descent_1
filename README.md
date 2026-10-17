@@ -66,7 +66,7 @@ lockout, so mashing cannot trap you in permanent recovery either. That is the
 trade this phase exists to test: every swing you throw buys damage with a full
 second of no defense.
 
-The enemy has `enemy_hp` HP (default 6). A landed **J** takes off
+The enemy has `enemy_hp` HP (default 9). A landed **J** takes off
 `attack_damage`, a successful counter takes off `counter_damage`, both default
 `1`. The blow that empties the bar ends the fight: the label reads **FIGHT WON**,
 holds through the usual recovery beat, then the enemy refills and the loop
@@ -105,10 +105,10 @@ you spend inside the enemy's tempo.
 vengeful. What it does **not** reset is your position in the sequence. The
 pattern keeps running across deaths, so dying never buys you a free re-sync on it
 (see **Methodical** below). Otherwise trading your life for one hit would be
-strictly profitable, and the fastest route to FIGHT WON would be to die twice on
-purpose. That asymmetry is deliberate: the enemy needs six of yours, you need one
-of its. FIGHT WON resets HP and the rage window the same way, so a fresh fight
-never starts with a short telegraph. **R** goes further: it re-reads
+strictly profitable, and the fastest route to FIGHT WON would be to trade a life
+for every hit. That asymmetry is deliberate: the enemy needs nine of yours,
+you need one of its. FIGHT WON resets HP and the rage window the same way, so a
+fresh fight never starts with a short telegraph. **R** goes further: it re-reads
 `tuning.json`, so it also restarts the sequence from the top along with the RNG.
 
 ## Vengeful
@@ -319,13 +319,14 @@ does is count.
   sequence. The other two channels carry the read alone there, which they can, a
   landed swing flinches the enemy and moves `left:` and a whiff does neither.
 - **Learning survives the fight.** Weights and active adaptations are not cleared
-  by your death or by **FIGHT WON**. At `enemy_hp` 6 and threshold 3 the fastest
+  by your death or by **FIGHT WON**. At `enemy_hp` 9 and threshold 3 the fastest
   line, a counter plus a poke into the enemy's recovery, takes about two HP a
-  cycle and is the one that adapts `AFTER`, so an adaptation forms on roughly the
-  same boundary that line ends the fight on, and per-fight learning would make
-  the trait a near no-op. It is also the rule the sequence already follows:
-  dying does not re-sync the thing you are being read on, so trading your life
-  for a clean slate is not a move. **R** clears both.
+  cycle and is the one that adapts `AFTER`. When it does, the enemy is at 3 HP,
+  so the adaptation bites inside the fight that taught it. Persistence still
+  matters, because per-fight learning would let a death wipe it. It is also the
+  rule the sequence already follows: dying does not re-sync the thing you are
+  being read on, so trading your life for a clean slate is not a move. **R**
+  clears both.
 - **The HUD does not print what it learned.** It shows `adaptive_threshold`,
   `adaptive_capacity`, `adaptive_patience_guard_multiplier` and a bare
   `active: N/M` count. It never shows which buckets are adapted and it never
@@ -408,7 +409,7 @@ rules to act on. Rule 3 is the one that survives, and it survives unchanged.
   recovery, then a 0.55 to 0.75 s guard beat, then a 1.2 s telegraph, so about
   2.9 to 3.1 s of quiet against a 1.0 s lockout. Then the `WINDUP` bucket adapts
   and the same press stops working. That line is the pure cancel, one HP a cycle
-  and nothing else, so at threshold 3 it stops with 3 of the enemy's 6 HP still
+  and nothing else, so at threshold 3 it stops with 6 of the enemy's 9 HP still
   up. Findings item 3 recorded aggression as *strictly* dominant. Here it is
   dominant and then priced.
 
@@ -427,7 +428,7 @@ strings, plus one optional nineteenth (`seed`):
   "camera_distance": 8.0,
   "windup_color_amount": 0.0,
   "windup_lean_amount": 2.0,
-  "enemy_hp": 6,
+  "enemy_hp": 9,
   "counter_damage": 1,
   "attack_damage": 1,
   "player_attack_recovery": 1.0,
@@ -463,8 +464,15 @@ strings, plus one optional nineteenth (`seed`):
   so there is no pop when you change it.
 - `enemy_hp` - integer `>= 1`, HP the enemy starts each fight with. Clamped up to
   1 (a 0-HP enemy would end the fight on the first frame you touched it). Shipped
-  at `6`, raised from `3` in Phase 3: a fight has to outlast one full pass of the
-  sequence or there is nothing to learn inside it.
+  at `9`. Phase 3 raised it from `3` to `6`, because a fight has to outlast one
+  full pass of the sequence or there is nothing to learn inside it. Phase 4
+  raised it from `6` to `9`, because counter-then-J takes two HP a cycle at the
+  shipped damage and `9` is the smallest value where that line needs
+  `adaptive_threshold + 2` cycles to kill by damage alone. At `6` it killed in
+  the same recovery whose exit formed the `AFTER` adaptation, so the fight that
+  taught it never played a cycle against it. At `9` the enemy is at 3 HP when
+  `AFTER` adapts. The HP is not derived from the threshold: change
+  `adaptive_threshold` and `enemy_hp` stays where it is.
 - `counter_damage` - integer `>= 0`, HP a successful counter takes off. Floored
   at `0`, not at `1`, because "this verb deals no damage" is a legitimate
   experiment: set it to `0` to get the old behaviour back, where countering only
@@ -559,7 +567,7 @@ one, and a `VENGEFUL` readout while the rage window is open, and under
 It shows `methodical_reset_time` and `methodical_resume` but **never**
 `methodical_sequence`, the position in it, or the next attack, and never which
 signatures are adapted or any weight. Missing file or a
-bad/missing key falls back to sane defaults (1.2 / 0.35 / 8.0 / 1.0 / 1.0 / 6 /
+bad/missing key falls back to sane defaults (1.2 / 0.35 / 8.0 / 1.0 / 1.0 / 9 /
 1 / 1 / 1.0 / 2.5 / 0.6 / "AABAB" / 0.55 / "next" / "adaptive" / 3 / 2 / 0.5,
 seed random) and keeps running.
 
@@ -671,7 +679,7 @@ Play several fights at the shipped values and judge by hand:
    `tuning.json` first, that defeats the test. Play with the A/B letter on the
    result label and see whether you start pre-committing to a counter before the
    pose is readable. If you never do, either the sequence is too long, the fight
-   is too short at `enemy_hp` 6, or the guard beat is not punctuating clearly
+   is too short at `enemy_hp` 9, or the guard beat is not punctuating clearly
    enough to count against.
 2. **Do you ever hold back a swing specifically to keep tracking it?** Not
    because you fear the retaliation, that was Phase 2. Because you know where you
@@ -689,7 +697,7 @@ Play several fights at the shipped values and judge by hand:
 
 The honest failure mode: if you can play the whole fight without ever counting,
 the sequence is decoration. Either the guard beat is not marking the steps, or
-0.55 s is too short to register as a beat, or `enemy_hp` 6 still is not long
+0.55 s is too short to register as a beat, or `enemy_hp` 9 still is not long
 enough to see `"AABAB"` come around twice.
 
 ### Experiment: do you ever change your timing because it learned the old one?
@@ -706,11 +714,14 @@ Judge by hand:
    learned the old one?** Not because you are afraid of the wind-up, that was
    Phase 2, and not to hold your place in the sequence, that was Phase 3. Because
    the place you had been swinging stopped paying and you went looking for
-   another one. From cold memory at six HP, counter-then-J kills on cycle three,
-   before `AFTER` activates at that cycle's recovery exit. Keep the threshold at
-   `3` and capacity at `2`. For a longer diagnostic replay, temporarily set
-   `enemy_hp` to `12` and press **R** once, then keep using counter-then-hit until
-   the enemy gives you a reason to change timing. Restore HP to `6` afterwards.
+   another one. From cold memory at nine HP, counter-then-J has the enemy at 3 HP
+   when `AFTER` activates at cycle three's recovery exit, so the next post-counter
+   J whiffs with fight left. Keep the habit and the fight ends on cycle six;
+   switch to a guard-beat swing plus the counter and it ends on cycle five. Keep
+   the threshold at `3` and capacity at `2`. For a longer diagnostic replay,
+   temporarily set `enemy_hp` to `12` and press **R** once, then keep using
+   counter-then-hit until the enemy gives you a reason to change timing. Restore
+   HP to `9` afterwards.
    This extends observation time, not normal combat balance. During recovery,
    watch the HP `left:` count and flinch because the A/B result owns the label.
 2. **Can you tell *what* it learned, without being told?** You should be able to
@@ -764,7 +775,7 @@ Run the arithmetic assertions and combat regressions with the installed Godot
 ```
 
 For the longer diagnostic only, temporarily set `enemy_hp` to `12` in
-`tuning.json` and append `-- --diagnostic` to that command. Restore `6` after
+`tuning.json` and append `-- --diagnostic` to that command. Restore `9` after
 the run. All other shipped tuning stays unchanged. Visual and behavioral checks
 still need the player in the editor:
 
@@ -813,7 +824,7 @@ Also for Phase 4:
 - The HUD never reveals which signature is adapted, nor any weight, and the
   `methodical_reset_time` line keeps showing the tuned value even while the beat
   on screen is compressed.
-- Six hits in any mix of verbs still produce **FIGHT WON**.
+- Nine hits in any mix of verbs still produce **FIGHT WON**.
 
 Phase 3 (Methodical + arbitration), the four that matter most:
 
@@ -847,7 +858,7 @@ Also for Phase 3:
   confirm the shorter loop takes effect immediately without an index error.
 - Set `methodical_reset_time` to `0.0` and the guard beat disappears while the
   sequence keeps running; raise it to `1.5` and the whole loop slows down.
-- Six hits, in any mix of verbs, produce **FIGHT WON**.
+- Nine hits, in any mix of verbs, produce **FIGHT WON**.
 
 The four that matter most in Phase 2, because both fixes hang off them:
 
@@ -874,15 +885,15 @@ Phase 2 (player offense + Vengeful):
   press, and a blocked counter does not consume the cycle's one counter attempt
   (you can still counter later in the same wind-up). Mashing J does not extend
   the lockout.
-- Six hits produce **FIGHT WON**, it holds for the recovery beat, and the enemy
+- Nine hits produce **FIGHT WON**, it holds for the recovery beat, and the enemy
   comes back at full HP. The HUD's `left:` count matches what you have landed,
   and pressing J during the FIGHT WON hold does nothing.
 - A successful counter takes `counter_damage` off the HUD's `left:` count, and
   the enemy does **not** go vengeful from it: no rise, no tremble, no `VENGEFUL`
-  readout, and the next wind-up is full length. Counter six times in a row and
+  readout, and the next wind-up is full length. Counter nine times in a row and
   the fight ends without the enemy ever being enraged.
-- Mix the verbs: swing twice, counter four times, and confirm the fight still
-  ends at six and the FIGHT WON hold looks the same whichever verb landed last.
+- Mix the verbs: swing twice, counter seven times, and confirm the fight still
+  ends at nine and the FIGHT WON hold looks the same whichever verb landed last.
 - Set `counter_damage` to `0`, press **R**, and countering goes back to cancelling
   the attack without advancing the fight. Set `attack_damage` to `0` and a swing
   still enrages the enemy while buying nothing. Both are experiments, not

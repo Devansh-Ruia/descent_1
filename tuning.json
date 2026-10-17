@@ -4,7 +4,7 @@
   "camera_distance": 8.0,
   "windup_color_amount": 0.0,
   "windup_lean_amount": 2.0,
-  "enemy_hp": 6,
+  "enemy_hp": 9,
   "counter_damage": 1,
   "attack_damage": 1,
   "player_attack_recovery": 1.0,

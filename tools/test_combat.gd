@@ -68,7 +68,10 @@ func _test_default_counter_hit() -> void:
 	_check(game.enemy_constraint == "adaptive", "loaded tuning enables Adaptive")
 	_check(game.sequence == [0, 0, 1, 0, 1] and game.methodical_resume == "next", "loaded Methodical AABAB / next")
 	_check(game.adaptive_capacity == 2 and game.adaptive_threshold == 3, "shipped capacity and threshold")
-	_check(game.enemy_hp == 6 and game.counter_damage == 1 and game.attack_damage == 1, "normal HP and damage unchanged")
+	_check(game.enemy_hp == 9 and game.counter_damage == 1 and game.attack_damage == 1, "normal HP and damage unchanged")
+	# This scenario needs the third counter-then-J to kill before AFTER activates, which the shipped HP no longer does.
+	game.enemy_hp = 6
+	game.enemy_hp_left = 6
 	var attacks: Array[int] = []
 	for cycle in range(3):
 		_windup()
@@ -208,7 +211,7 @@ func _test_counter_windows_and_vengeful() -> void:
 	_windup()
 	game.state_time = game.eff_telegraph
 	_press(KEY_SPACE)
-	_check(game.state == S.RECOVERY and game.enemy_hp_left == 5, "counter at wind-up tail remains valid")
+	_check(game.state == S.RECOVERY and game.enemy_hp_left == 8, "counter at wind-up tail remains valid")
 	_fresh()
 	_windup()
 	game._process(game.eff_telegraph + 0.001)
@@ -218,7 +221,7 @@ func _test_counter_windows_and_vengeful() -> void:
 	game.enemy_constraint = "vengeful"
 	_windup()
 	_counter()
-	_check(game.enemy_hp_left == 5 and game.vengeful_left == 0.0, "Vengeful counter damage is intact and never enrages")
+	_check(game.enemy_hp_left == 8 and game.vengeful_left == 0.0, "Vengeful counter damage is intact and never enrages")
 	_finish_cycle()
 	_windup()
 	_press(KEY_J)
@@ -242,7 +245,7 @@ func _test_counter_windows_and_vengeful() -> void:
 	_press(KEY_J)
 	game._process(game.VENGE_POSE_TIME + 0.001)
 	_counter()
-	_check(game.enemy_hp_left == 4 and game.seq_index == 0, "retaliation remains counterable at its tail without consuming a sequence step")
+	_check(game.enemy_hp_left == 7 and game.seq_index == 0, "retaliation remains counterable at its tail without consuming a sequence step")
 	_check(game.vengeful_left < game.vengeful_duration - 1.0, "counter does not refresh the rage window")
 	_fresh()
 	game.enemy_constraint = "vengeful"
