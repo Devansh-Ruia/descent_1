@@ -1,10 +1,14 @@
-# Descent - Phase 3: the first pattern trait
+# Descent - Phase 4: the paired constraint
 
 Not a game. This is a decision test built on the Phase 0 readability test: a bare
 room, one enemy that telegraphs one of two attacks each cycle, two counters, and
 one attack of your own. The A/B order is no longer a coin flip: it is a fixed
-repeating sequence, and there is a visible beat before every one of them. You
-read which attack is winding up and press its counter. You are judging:
+repeating sequence, and there is a visible beat before every one of them. On top
+of that the enemy carries exactly one constraint, picked by `enemy_constraint`:
+**Vengeful**, which retaliates for every hit you land, or **Adaptive**, which
+counts *when* in the cycle you swing and stops rewarding the part you repeat.
+Never both, so each paired fight is a clean measurement. You read which attack is
+winding up and press its counter. You are judging:
 
 1. Can you tell attack **A**'s wind-up from attack **B**'s in time to choose?
 2. Does landing the right counter feel like a **read**, not a guess between two
@@ -14,6 +18,8 @@ read which attack is winding up and press its counter. You are judging:
    of the two strictly better?
 5. The order is learnable by watching. Do you ever hold back a swing
    *specifically* to keep tracking the sequence?
+6. Adaptive punishes repetition. Do you ever change your swing timing
+   *specifically* because the enemy has learned the old one?
 
 ## How to run
 
@@ -27,7 +33,8 @@ read which attack is winding up and press its counter. You are judging:
    - **K** - counter attack B.
    - **J** - attack the enemy.
    - **R** - reload `tuning.json` live (also re-applies the camera distance, the
-	 seed, refills the enemy's HP, and restarts the sequence from step one).
+	 seed, refills the enemy's HP, restarts the sequence from step one, and
+	 clears everything Adaptive has learned).
 
    Forced choice: each counter only beats its own attack. Press the wrong one,
    mistime it, or do nothing and the strike lands = LOSE.
@@ -44,16 +51,20 @@ check your read before the next cycle.
 
 ## Your attack, and what it costs
 
-**J** lands a hit whenever the enemy is not already mid-strike and not winding up
-a retaliation. It whiffs during the strike, because the strike is committed and
-moving, and it whiffs for the whole of a vengeful wind-up, because that attack is
-the one you provoked (see **Vengeful** below). Either way the press puts
-you in recovery for `player_attack_recovery` seconds, and while that is draining
-**SPACE, K and J all do nothing**. A blocked counter is not consumed, it simply
-does not happen, so you cannot burn your one counter attempt by mashing. A
-blocked J is eaten outright and does not refresh the lockout, so mashing cannot
-trap you in permanent recovery either. That is the trade this phase exists to
-test: every swing you throw buys damage with a full second of no defense.
+**J** lands a hit whenever the enemy is not already mid-strike and not winding
+up a retaliation. It whiffs during the strike, because the strike is committed
+and moving, and it whiffs for the whole of a vengeful wind-up, because that
+attack is the one you provoked (see **Vengeful** below). Under
+`enemy_constraint: "adaptive"` there is a third way to whiff: swinging in a part
+of the cycle the enemy has already learned, which reads **WHIFF** on the label
+unless the label is still holding an A/B reveal (see **Adaptive** below). Either
+way the press puts you in recovery for `player_attack_recovery` seconds, and
+while that is draining **SPACE, K and J all do nothing**. A blocked counter is
+not consumed, it simply does not happen, so you cannot burn your one counter
+attempt by mashing. A blocked J is eaten outright and does not refresh the
+lockout, so mashing cannot trap you in permanent recovery either. That is the
+trade this phase exists to test: every swing you throw buys damage with a full
+second of no defense.
 
 The enemy has `enemy_hp` HP (default 6). A landed **J** takes off
 `attack_damage`, a successful counter takes off `counter_damage`, both default
@@ -196,10 +207,148 @@ or read you either. It just refuses to be random.
   you earn. The only ground truth is the post-cycle A/B letter on the result
   label, which is how you learn the sequence: by watching, one cycle at a time.
 
+## Adaptive
+
+The third trait, and the paired constraint to Vengeful. The two never run on the
+same enemy: `enemy_constraint` picks one, so both fights are playable from the
+same build, and `"adaptive"` is what ships. Like the other two, Adaptive is a
+constraint rather than a behaviour pattern. It does not read your intent, it does
+not choose its attacks differently, and it never touches the A/B mapping. All it
+does is count.
+
+- **What it is allowed to read.** Your **counter** choice is dictated by the
+  enemy's attack, so it carries no repetition worth punishing: pressing SPACE on
+  every A is not a habit, it is the correct answer. That leaves exactly two
+  discretionary choices in this build, whether you swing and when, so a signature
+  is a swing plus a coarse bucket for where in the cycle it landed. Never
+  swinging at all is a signature too.
+- **The four signatures.** Read from the enemy's state at the moment of an
+  accepted **J** press. A press eaten by your own recovery lockout is not an
+  action and records nothing.
+
+  | Signature | Enemy state at the press |
+  |---|---|
+  | `GUARD` | `IDLE`, so during the guard beat |
+  | `WINDUP` | `WINDUP` |
+  | `AFTER` | `STRIKE`, `RECOVERY`, or the stance shift |
+  | `PATIENCE` | no accepted swing anywhere in the cycle |
+
+  The signature is your *choice*, not its outcome, so a press that whiffs still
+  records. Combat inputs during a terminal **FIGHT WON** or **LOSE** hold are
+  rejected before they spend recovery or mark a bucket. The legitimate killing
+  swing still belongs to the completed cycle. `STRIKE` and `RECOVERY` are the tail of the cycle that just
+  telegraphed. The stance shift is not: it starts *after* the cycle boundary has
+  already counted, so a press during the lift is credited to the **following**
+  cycle. It shares the `AFTER` bucket anyway, because every press needs a bucket
+  and a press belonging to none would silently read as `PATIENCE`. A press during
+  `STRIKE` has never been able to deal damage, so `AFTER` is in practice the
+  recovery bucket.
+- **Counting is per cycle, not per press.** A press only marks its bucket as
+  seen. All the arithmetic happens once, at the end of the enemy's recovery: each
+  bucket you used this cycle gains `1.0`, and every bucket you did not use decays
+  to 40% of what it held. One cycle is therefore worth at most one point to any
+  one bucket, however many times you press inside it, which is the only way
+  "repeated for N cycles" can mean what it says.
+- **What that makes safe.** A *strict* rotation of period *p*, one bucket per
+  cycle and never two in a row, settles at `1 / (1 - 0.4^(p-1))`. Strict
+  alternation between two buckets tops out at `1.67`, a three-way rotation at
+  `1.19`, and both stay under any threshold of `2` or more, permanently. Varying
+  your timing is not a trick that delays Adaptive, it is an answer that beats it
+  outright. Swinging in the same bucket every cycle is the other end of that:
+  1, 2, 3, 4 and climbing without bound, so `adaptive_threshold` at `3` trips on
+  the third consecutive cycle **out of a cold bucket**.
+- **What it does not make safe.** Activation is a test on the weight, not on a
+  fresh run of cycles, so a bucket still warm from a recent partial habit crosses
+  sooner than `adaptive_threshold` consecutive cycles: `k` in a row is enough as
+  soon as `k >= N - 0.4 * w`, where `w` is what the bucket held before them. That
+  is what catches a duty cycle fatter than one-in-*p*, which the ceiling formula
+  above says nothing about. Swing twice and rest once in one bucket at threshold
+  `3` and the weight runs 1, 2, 0.8, 1.8, 2.8, 1.12, 2.12, 3.12, adapting off the
+  last **two** consecutive cycles. That is wanted, not a leak: "swing twice, rest
+  once" is a habit, and the rule is that a habit eventually gets read.
+- **Forming, capacity, eviction.** When a bucket's weight reaches
+  `adaptive_threshold` it becomes active. `adaptive_capacity` (default `2`) caps
+  how many can be active at once, and a new one **evicts the oldest**, whose
+  weight is zeroed on the way out so it cannot immediately re-cross. An active
+  adaptation never expires on its own. Decay does not flush it, only a newer
+  adaptation pushing it off the front does. So the way to get an adaptation off
+  you is to build a different one, which means finding a third rhythm rather than
+  going back to the first. `PATIENCE` takes a slot in the same list under the
+  same cap and the same rule.
+- **What an adaptation does to a swing.** Swing into an adapted bucket and the
+  swing passes through. No damage, no flinch, no cancel, and the label reads
+  **WHIFF**, unless the label is busy holding an A/B reveal (see below). The
+  press still costs you `player_attack_recovery` seconds of defense, exactly as
+  it always did, so an adapted habit is not blocked, it is priced. `PATIENCE`
+  can never whiff anything, because it is not a press.
+- **What an adapted `PATIENCE` does.** It compresses the guard beat by
+  `adaptive_patience_guard_multiplier` (default `0.5`). Both halves scale
+  together, the square-up pose and the idle gap that contains it, jitter
+  included. At the shipped values a `0.55` s beat plus up to `0.20` s of jitter
+  becomes `0.28` s plus up to `0.10` s, so the loop speeds up and the safe
+  opening you were living in gets smaller. The wobble runs on beat *progress*
+  rather than wall-clock seconds, so it completes the same square-up-and-settle
+  and lands just as level in `0.28` s as it does in `0.55` s: a compressed beat
+  is a faster beat, not a truncated one. That is the answer to pure defense.
+  Countering costs nothing up front, so the only thing that can be charged for
+  it is tempo.
+- **The stance shift.** On any cycle where an adaptation forms, the enemy rises
+  off the floor and settles back down over about `0.45` s before the next guard
+  beat. A terminal result skips the stance and starts the next fight's guard;
+  the completed cycle still activates learning at its recovery exit. No resolved
+  hit is changed retroactively. In a living fight the shift signals learning. It is a lift, so
+  it cannot be confused with anything else on screen: A rears back and tips away,
+  B crouches and squashes, the guard beat rolls side to side and settles level,
+  the vengeful pose stretches tall and trembles sideways. Nothing else in the
+  game leaves the ground.
+- **The cancel survives, the retaliation does not.** A hit landed during a normal
+  wind-up still **cancels that attack**, the same as under Vengeful: the cue stops
+  and no strike commits from it. What is different is what comes next. There is
+  no rise-tall pose and no faster follow-up, the enemy just uncoils through its
+  normal recovery, and the label reads **HIT** with no A/B letter after it.
+  Revealing the letter of a wind-up that never landed would hand back the
+  sequence step the swing was supposed to cost.
+- **Two new labels, neither of which leaks anything.** **HIT** is a swing that
+  cancelled a wind-up. **WHIFF** is a swing into an adapted bucket. Neither
+  carries an A/B letter. Between the label, the HP `left:` count and the flinch
+  you can always tell which of the two happened, and that is the readability
+  guarantee Adaptive needs in place of Vengeful's visibly missing guard beat.
+  One deliberate exception: a whiff during the enemy's recovery or its stance
+  shift prints **nothing at all**, because the label is still holding that
+  cycle's A/B reveal and the letter is the only ground truth you ever get on the
+  sequence. The other two channels carry the read alone there, which they can, a
+  landed swing flinches the enemy and moves `left:` and a whiff does neither.
+- **Learning survives the fight.** Weights and active adaptations are not cleared
+  by your death or by **FIGHT WON**. At `enemy_hp` 6 and threshold 3 the fastest
+  line, a counter plus a poke into the enemy's recovery, takes about two HP a
+  cycle and is the one that adapts `AFTER`, so an adaptation forms on roughly the
+  same boundary that line ends the fight on, and per-fight learning would make
+  the trait a near no-op. It is also the rule the sequence already follows:
+  dying does not re-sync the thing you are being read on, so trading your life
+  for a clean slate is not a move. **R** clears both.
+- **The HUD does not print what it learned.** It shows `adaptive_threshold`,
+  `adaptive_capacity`, `adaptive_patience_guard_multiplier` and a bare
+  `active: N/M` count. It never shows which buckets are adapted and it never
+  shows a weight, for the same reason it never shows `methodical_sequence`:
+  working out which habit it caught is exactly what the whiff, the label and the
+  stance shift exist to make you do. A count leaks no habit while still telling
+  you an eviction is one adaptation away. `methodical_reset_time` keeps printing
+  its tuned value too, never the compressed one, because that would give away
+  that `PATIENCE` is up.
+
+Counters are unchanged and unaffected. Adaptive never reads them, never whiffs
+them, and **SPACE beats A, K beats B** at every point above.
+
 ## Arbitration: which system picks the next attack
 
-Two traits now want to choose the same thing, so the rule between them is
-explicit. All five parts of it:
+Methodical picks every sequence attack under either constraint. What varies is
+which other trait is sitting on top of it, and `enemy_constraint` is the only
+thing that decides that, so the rule splits in two.
+
+### Under `enemy_constraint: "vengeful"`
+
+Two traits want to choose the same thing, so the rule between them is explicit.
+All five parts of it:
 
 1. **Vengeful is unchanged.** It still fires deterministically on a landed **J**
    hit, and it still shortens the next telegraph by
@@ -230,10 +379,46 @@ for `player_attack_recovery` seconds and bought an attack you cannot cancel. Now
 it also spends a step of the pattern and inserts an unpredictable attack in the
 middle of it.
 
+### Under `enemy_constraint: "adaptive"`
+
+Nothing enrages the enemy here, so there is no retaliation for four of those five
+rules to act on. Rule 3 is the one that survives, and it survives unchanged.
+
+- **Rules 1, 2, 4 and 5 are inoperative.** No hit shortens a telegraph (1). There
+  is no off-sequence attack, because there is no retaliation to be off-sequence
+  (2). `methodical_resume` never fires, because the only thing that reads it is
+  the retaliation branch (4). And there is no vengeful-to-wind-up handoff left to
+  be visible (5). `vengeful_duration` and `vengeful_telegraph_multiplier` are
+  dead keys, the HUD stops printing them, and the `VENGEFUL` readout can never
+  light. Every attack comes from the sequence, with no coin flips inserted in the
+  middle of it, so the pattern is easier to count under Adaptive than it has ever
+  been.
+- **Rule 3 survives, and it is the whole arbitration.** The position still
+  advances the moment a *sequence* wind-up **begins**, and it is still never
+  rolled back. Cancel that wind-up with **J** and the step is still consumed:
+  that attack never replays, and you have lost a step of the pattern you were
+  counting. Landing a hit during the guard beat, with no wind-up in flight, still
+  consumes no step. So swinging still costs you the read, and it costs it in a
+  fight where the read is cleaner and therefore worth more.
+- **The second price is on the timing, not on the next attack.** Adaptive's
+  reply to a swing is not another attack. Cancelling wind-ups is close to free
+  for exactly `adaptive_threshold` cycles **out of a cold `WINDUP` bucket**, and
+  for fewer out of a warm one. Learning is not cleared by your death or by FIGHT
+  WON, so a second fight can start warm and adapt sooner. A cancel buys 1.1 s of
+  recovery, then a 0.55 to 0.75 s guard beat, then a 1.2 s telegraph, so about
+  2.9 to 3.1 s of quiet against a 1.0 s lockout. Then the `WINDUP` bucket adapts
+  and the same press stops working. That line is the pure cancel, one HP a cycle
+  and nothing else, so at threshold 3 it stops with 3 of the enemy's 6 HP still
+  up. Findings item 3 recorded aggression as *strictly* dominant. Here it is
+  dominant and then priced.
+
+The short version under Adaptive: **swinging costs you the read, and repeating
+yourself costs you the swing.**
+
 ## Tuning
 
-Edit `tuning.json` at the repo root. Fourteen keys, twelve numbers and two
-strings, plus one optional fifteenth (`seed`):
+Edit `tuning.json` at the repo root. Eighteen keys, fifteen numbers and three
+strings, plus one optional nineteenth (`seed`):
 
 ```json
 {
@@ -250,7 +435,11 @@ strings, plus one optional fifteenth (`seed`):
   "vengeful_telegraph_multiplier": 0.6,
   "methodical_sequence": "AABAB",
   "methodical_reset_time": 0.55,
-  "methodical_resume": "next"
+  "methodical_resume": "next",
+  "enemy_constraint": "adaptive",
+  "adaptive_threshold": 3,
+  "adaptive_capacity": 2,
+  "adaptive_patience_guard_multiplier": 0.5
 }
 ```
 
@@ -312,7 +501,46 @@ strings, plus one optional fifteenth (`seed`):
   whether the beat is doing anything.
 - `methodical_resume` - **string**, `"next"` (default) or `"restart"`. Where the
   sequence picks up after a retaliation. See **Arbitration** above. Any other
-  value, or the wrong type, falls back to `"next"`.
+  value, or the wrong type, falls back to `"next"`. Inert under
+  `enemy_constraint: "adaptive"`, where no retaliation ever happens.
+- `enemy_constraint` - **string**, `"adaptive"` (default) or `"vengeful"`. Which
+  constraint this enemy carries on top of Methodical. Never both: an enemy that
+  learns *and* retaliates is two experiments running at once and measures
+  neither. Only the exact string `"vengeful"` opts out, so a typo, a number or a
+  missing key lands on `"adaptive"`. Switching it takes a press of **R**, and
+  that press also clears whatever Adaptive had learned, so a Vengeful fight can
+  never start with a live adaptation on it. Under `"vengeful"` the build is
+  Phase 3 exactly: no whiffs, no stance shift, no adaptive HUD lines.
+- `adaptive_threshold` - integer `>= 1`, the weight one signature has to reach
+  before the enemy adapts to it, default `3`. Because the count is a per-cycle
+  seen-set, `N` is `N` consecutive cycles out of a **cold** bucket. Out of a warm
+  one it is fewer, because the test is on the accumulated weight and decay only
+  takes a bucket to 40% a cycle: `k` consecutive cycles cross as soon as
+  `k >= N - 0.4 * w`. So a duty cycle fatter than one-in-*p* is caught as well,
+  by design. What is *never* caught is a strict rotation: alternating two buckets
+  tops out at `1.67` and rotating three at `1.19`, permanently. Floored at `1`,
+  which adapts off a single cycle. That is degenerate for play but the fastest
+  way to check that the whiff and the stance shift read at all.
+- `adaptive_capacity` - integer `>= 1`, how many adaptations can be live at once,
+  default `2`. A new one evicts the oldest and zeroes its weight, so the evicted
+  bucket becomes safe again and has to be re-earned from zero. At `1` the enemy
+  can only hold one habit against you, so alternating two buckets is enough to
+  keep flushing it, which is the cheapest way to feel the eviction rule working.
+  Raise it to `4` and every bucket can be adapted at once, at which point there
+  is nowhere left to move and the only safe play is to stop swinging, which
+  `PATIENCE` then answers. Floored at `1`, not `0`: a capacity of `0` would evict
+  every adaptation on the same boundary that formed it, leaving a stance shift
+  that means nothing.
+- `adaptive_patience_guard_multiplier` - float in `(0.0, 1.0]`, what the guard
+  beat is multiplied by while `PATIENCE` is adapted, default `0.5`. The idle
+  jitter scales with it, so the whole opening compresses rather than the pose
+  and the gap coming apart. `1.0` means an adapted `PATIENCE` costs nothing,
+  which is the clean A/B test for whether compressing the beat is doing any
+  work. Clamped to `0.05` at the bottom, never `0`, because a zero-length beat
+  would delete the punctuation the sequence is counted against. The risk to
+  watch at `0.5`: the README already suspects `0.55` s is near the floor for a
+  beat you can see, and `0.5` takes it to `0.28` s. If it reads as a flicker
+  rather than a beat, raise this.
 - `seed` - **optional**. Integer seed for the RNG that drives the A/B pick each
   cycle and the idle-gap jitter. Leave the key out (or set it `<= 0`) and every
   run randomizes, which is the default. Set it to a positive integer to replay
@@ -321,20 +549,28 @@ strings, plus one optional fifteenth (`seed`):
   truncated. The HUD prints `seed: random` when no override is in force.
 
 Save the file, then press **R** in-game to apply them live. The HUD shows the
-current values, the enemy's remaining HP, both damage numbers, the resolved
-counter window for both a normal and a vengeful wind-up, and a `VENGEFUL` readout while the rage window is
-open. It shows `methodical_reset_time` and `methodical_resume` but **never**
-`methodical_sequence`, the position in it, or the next attack. Missing file or a
+current values, the enemy's remaining HP, both damage numbers, `enemy_constraint`
+and the resolved counter window. Only the live constraint's own keys are printed,
+so the block stays the same height either way and never shows a number that
+cannot do anything: under `"vengeful"` you get `vengeful_duration`,
+`vengeful_telegraph_multiplier`, the vengeful counter window alongside the normal
+one, and a `VENGEFUL` readout while the rage window is open, and under
+`"adaptive"` you get the three adaptive keys and the `active: N/M` count instead.
+It shows `methodical_reset_time` and `methodical_resume` but **never**
+`methodical_sequence`, the position in it, or the next attack, and never which
+signatures are adapted or any weight. Missing file or a
 bad/missing key falls back to sane defaults (1.2 / 0.35 / 8.0 / 1.0 / 1.0 / 6 /
-1 / 1 / 1.0 / 2.5 / 0.6 / "AABAB" / 0.55 / "next", seed random) and keeps
-running.
+1 / 1 / 1.0 / 2.5 / 0.6 / "AABAB" / 0.55 / "next" / "adaptive" / 3 / 2 / 0.5,
+seed random) and keeps running.
 
-One caveat for a play session: **R** re-reads `tuning.json`, so it silently
-re-syncs the pattern to step one. Nothing on screen says so, because the HUD
-never shows the position. Tap **R** between fights to tweak a value and you have
-also reset the thing you were trying to learn, which confounds any read on
-whether the sequence is learnable *across* fights. Finish a measurement run
-before you touch it.
+One caveat for a play session, and it now covers two learned things rather than
+one: **R** re-reads `tuning.json`, so it silently re-syncs the pattern to step
+one *and* clears every adaptive weight and active adaptation. Nothing on screen
+says so, because the HUD shows neither the position nor which signatures were
+caught. Tap **R** between fights to tweak a value and you have reset both of the
+things the phase is trying to measure, which confounds any read on whether the
+sequence is learnable *across* fights and any read on how Adaptive builds up over
+one. Finish a measurement run before you touch it.
 
 Note the interaction between `counter_window` and the vengeful telegraph: the
 window is clamped to at most the whole wind-up. If you set `counter_window`
@@ -456,18 +692,128 @@ the sequence is decoration. Either the guard beat is not marking the steps, or
 0.55 s is too short to register as a beat, or `enemy_hp` 6 still is not long
 enough to see `"AABAB"` come around twice.
 
+### Experiment: do you ever change your timing because it learned the old one?
+
+This is the question Phase 4 exists to answer, and Adaptive is the only trait
+that can answer it. Set `enemy_constraint` to `"adaptive"`, press **R**, and play
+several fights without reading the signature table above first. The mechanism is
+meant to be inferable from play: you swing somewhere, it keeps working, then it
+stops working, and the enemy lifts off the floor on the cycle it stops.
+
+Judge by hand:
+
+1. **Do you ever change your swing timing specifically because the enemy has
+   learned the old one?** Not because you are afraid of the wind-up, that was
+   Phase 2, and not to hold your place in the sequence, that was Phase 3. Because
+   the place you had been swinging stopped paying and you went looking for
+   another one. From cold memory at six HP, counter-then-J kills on cycle three,
+   before `AFTER` activates at that cycle's recovery exit. Keep the threshold at
+   `3` and capacity at `2`. For a longer diagnostic replay, temporarily set
+   `enemy_hp` to `12` and press **R** once, then keep using counter-then-hit until
+   the enemy gives you a reason to change timing. Restore HP to `6` afterwards.
+   This extends observation time, not normal combat balance. During recovery,
+   watch the HP `left:` count and flinch because the A/B result owns the label.
+2. **Can you tell *what* it learned, without being told?** You should be able to
+   get from a run of whiffs to "it has my recovery-window swing", because the HUD
+   refuses to say. If you can only ever tell that *something* was learned and
+   never which thing, the feedback is too thin, and the first place to look is
+   whether the stance shift is landing on the cycle you think it is.
+3. **Does the stance shift read as learning, or as a fourth attack?** It should
+   say "I have you", not "counter me now". If it baits a counter press, the pose
+   is wrong rather than the timing.
+4. **Is pure patience still playable?** Counter-only is the dominant line in the
+   findings so far, and `PATIENCE` is the answer to it. Play a fight without
+   pressing **J** once, then confirm the loop visibly speeds up after the third
+   cycle, and that the compressed beat is *still legible as a beat* at `0.28` s.
+   If it reads as a flicker, raise `adaptive_patience_guard_multiplier`. That is
+   what the knob is for.
+5. **Does eviction feel like an escape or like an accident?** With two
+   adaptations live, build a third in a fresh bucket and go back to the oldest
+   one. It should land again. The intended feel is that you bought that bucket
+   back by changing twice, not that the enemy forgot.
+
+The honest failure mode: if rotating your swing between two buckets keeps every
+swing landing forever with no thought behind it, Adaptive is not a constraint and
+the decision does not exist. Rotation beating the counting rule is by design, not
+a bug, so the thing to measure is whether rotating is something you have to
+notice and choose, or something your hands were already doing before the enemy
+learned anything.
+
 Every other constant (idle jitter, strike speed, recovery time, the guard-beat
-roll and damping, the vengeful pose length and shake, colors, camera angle) is
-hardcoded in `main.gd`, on purpose.
+roll and damping, the vengeful pose length and shake, the adaptive decay rate and
+the lift of the stance shift, colors, camera angle) is hardcoded in `main.gd`, on
+purpose. The decay is `0.4` rather than `0.5` deliberately: at `0.5` the
+alternation ceiling is exactly `2.0`, which a threshold of `2` would reach by
+float accumulation after about 53 cycles, so `0.4` is what keeps
+`adaptive_threshold` honest across its whole range.
 
 ## Verification
 
-The machine this was written on has no Godot binary, so **everything in Phases 2
-and 3 is reviewed against Godot 4 conventions and is not runtime-confirmed**.
-That includes all of Methodical, the guard beat and the arbitration rule, as well
-as the two Phase 2 fixes: the **J** whiff on vengeful wind-ups and counter
-damage. Nothing below has been seen or heard running. Verify by hand in the
-editor:
+The earlier no-Godot handoff is historical. Adaptive has now run locally, and
+the player reported "used counter then hit until it died" without changing
+timing because of learning. That run did not pass the behavioral gate. The
+source-confirmed terminal-input repair and deterministic Godot 4.7 results are
+recorded in findings item 7. Automated checks establish mechanics, not whether
+the player notices the response or chooses a new timing.
+
+Run the arithmetic assertions and combat regressions with the installed Godot
+4.7 executable:
+
+```powershell
+& 'C:/Users/super/Documents/Godot_v4.7-stable_win64.exe/Godot_v4.7-stable_win64_console.exe' --headless --path . --script tools/test_combat.gd
+```
+
+For the longer diagnostic only, temporarily set `enemy_hp` to `12` in
+`tuning.json` and append `-- --diagnostic` to that command. Restore `6` after
+the run. All other shipped tuning stays unchanged. Visual and behavioral checks
+still need the player in the editor:
+
+Phase 4 (Adaptive), the four that matter most:
+
+- **The stance shift is readable.** At `windup_color_amount` `0.0`, where the pose
+  is all there is, the lift should be visible and should not be mistaken for A's
+  rear-back, B's crouch, or the guard beat's roll. Check it on the `CapsuleMesh`
+  import fallback as well as on the GLB, because the fallback is the worst case
+  for a pose read.
+- **An adapted swing visibly whiffs.** Swing in the same bucket
+  `adaptive_threshold` times, watch for the shift, then swing there again. The HP
+  `left:` count should not move, there should be no flinch, and your lockout
+  should still be spent for `player_attack_recovery` seconds. Use the guard beat
+  or the wind-up to see the **WHIFF** label as well: in the enemy's recovery and
+  during the lift the label deliberately keeps that cycle's A/B reveal instead,
+  so there the missing flinch and the frozen `left:` count are the whole tell.
+  Judge the label's *color* here too: **WHIFF** at `(0.62, 0.58, 0.50)` sits only
+  about `1.42:1` against the watching gray, well under the usual `3:1` for
+  "reads as a different color", so confirm the warm cast is a real cue on your
+  monitor and not one the words are carrying alone.
+- **Varying your timing actually flushes an adaptation.** With two live, build a
+  third in a fresh bucket and confirm the oldest one stops whiffing, so the
+  bucket you were evicted out of is safe to use again. Then confirm the reverse:
+  alternate two buckets for a dozen cycles or more and confirm **no** adaptation
+  ever forms at all.
+- **Pure patience is no longer free.** Counter only, for `adaptive_threshold`
+  cycles, watch for the shift, and confirm the guard beat visibly shortens and
+  the loop speeds up. The risk on this one is the other direction: confirm the
+  compressed beat is still legible *as a beat* and not as a flicker. At the
+  shipped `0.5` multiplier a `0.55` s beat becomes `0.28` s.
+
+Also for Phase 4:
+
+- Learning survives a death and a **FIGHT WON**, so an adaptation built in one
+  fight is still on you in the next. **R** clears it.
+- `enemy_constraint: "vengeful"` plus **R** restores Phase 3 exactly:
+  retaliations, the short telegraph, the `VENGEFUL` readout, no whiffs, no lift,
+  and no adaptive lines in the HUD.
+- Under `"adaptive"` the `VENGEFUL` readout never lights, and every attack comes
+  from the sequence, so there should be no off-sequence coin flips at all.
+- Swinging still costs a sequence step: cancel a wind-up, confirm the label reads
+  **HIT** with no A/B letter, and confirm the step you cancelled does not replay.
+- Garbage in the four new keys (`""`, a number, a negative, `"xyz"`) plus **R**
+  keeps the game running on the defaults.
+- The HUD never reveals which signature is adapted, nor any weight, and the
+  `methodical_reset_time` line keeps showing the tuned value even while the beat
+  on screen is compressed.
+- Six hits in any mix of verbs still produce **FIGHT WON**.
 
 Phase 3 (Methodical + arbitration), the four that matter most:
 
