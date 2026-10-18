@@ -252,29 +252,46 @@ does is count.
 - **What that makes safe.** A *strict* rotation of period *p*, one bucket per
   cycle and never two in a row, settles at `1 / (1 - 0.4^(p-1))`. Strict
   alternation between two buckets tops out at `1.67`, a three-way rotation at
-  `1.19`, and both stay under any threshold of `2` or more, permanently. Varying
-  your timing is not a trick that delays Adaptive, it is an answer that beats it
-  outright. Swinging in the same bucket every cycle is the other end of that:
-  1, 2, 3, 4 and climbing without bound, so `adaptive_threshold` at `3` trips on
-  the third consecutive cycle **out of a cold bucket**.
+  `1.19`, and both stay under any threshold of `2` or more, permanently. At such
+  a threshold, varying your timing is not a trick that delays Adaptive, it is an
+  answer that beats it outright. Swinging in the same bucket every cycle is the
+  other end of that: 1, 2, 3, 4 and climbing without bound, so at a threshold of
+  `3` it would trip on the third consecutive cycle **out of a cold bucket**.
+- **What is safe at the shipped threshold.** `adaptive_threshold` ships at `1`,
+  and no ceiling stays under that: one cycle in a bucket takes it to `1.0`, so
+  any bucket you use adapts at that cycle's recovery exit. The swing lands the
+  first time and whiffs the next time, unless the bucket was evicted in between.
+  What a rotation has to beat here is `adaptive_capacity`, not the threshold.
+  Each new adaptation pushes the oldest one off, so a strict rotation of period
+  *p* lands every swing only if *p* is at least `adaptive_capacity + 1`, which is
+  `3`: each bucket has been evicted by the time it comes back around. Alternating
+  two buckets fills both slots, so from cold memory the third swing whiffs. There
+  are only three press buckets, so in a rotation that swings every cycle, every
+  third swing is a wind-up cancel. `PATIENCE` sits in the same list, so a cycle
+  with no accepted swing adapts it and can take the third slot instead, at the
+  price of a compressed guard beat while it is up. A whiffed swing is still an
+  accepted press, so it keeps `PATIENCE` off.
 - **What it does not make safe.** Activation is a test on the weight, not on a
-  fresh run of cycles, so a bucket still warm from a recent partial habit crosses
-  sooner than `adaptive_threshold` consecutive cycles: `k` in a row is enough as
-  soon as `k >= N - 0.4 * w`, where `w` is what the bucket held before them. That
-  is what catches a duty cycle fatter than one-in-*p*, which the ceiling formula
-  above says nothing about. Swing twice and rest once in one bucket at threshold
-  `3` and the weight runs 1, 2, 0.8, 1.8, 2.8, 1.12, 2.12, 3.12, adapting off the
-  last **two** consecutive cycles. That is wanted, not a leak: "swing twice, rest
-  once" is a habit, and the rule is that a habit eventually gets read.
+  fresh run of cycles, so at a threshold of `2` or more a bucket still warm from
+  a recent partial habit crosses sooner than `adaptive_threshold` consecutive
+  cycles: `k` in a row is enough as soon as `k >= N - 0.4 * w`, where `w` is what
+  the bucket held before them. That is what catches a duty cycle fatter than
+  one-in-*p*, which the ceiling formula above says nothing about. A threshold-3
+  example: swing twice and rest once in one bucket and the weight runs 1, 2, 0.8,
+  1.8, 2.8, 1.12, 2.12, 3.12, adapting off the last **two** consecutive cycles.
+  That is wanted, not a leak: "swing twice, rest once" is a habit, and the rule
+  is that a habit eventually gets read. None of this can happen at the shipped
+  `1`, where a single cycle always crosses, so a bucket that is not adapted
+  always sits at exactly `0`.
 - **Forming, capacity, eviction.** When a bucket's weight reaches
   `adaptive_threshold` it becomes active. `adaptive_capacity` (default `2`) caps
   how many can be active at once, and a new one **evicts the oldest**, whose
-  weight is zeroed on the way out so it cannot immediately re-cross. An active
-  adaptation never expires on its own. Decay does not flush it, only a newer
-  adaptation pushing it off the front does. So the way to get an adaptation off
-  you is to build a different one, which means finding a third rhythm rather than
-  going back to the first. `PATIENCE` takes a slot in the same list under the
-  same cap and the same rule.
+  weight is zeroed on the way out, so it has to be re-earned from zero and cannot
+  re-cross without being used again. An active adaptation never expires on its
+  own. Decay does not flush it, only a newer adaptation pushing it off the front
+  does. So the way to get an adaptation off you is to build a different one,
+  which means finding a third rhythm rather than going back to the first.
+  `PATIENCE` takes a slot in the same list under the same cap and the same rule.
 - **What an adaptation does to a swing.** Swing into an adapted bucket and the
   swing passes through. No damage, no flinch, no cancel, and the label reads
   **WHIFF**, unless the label is busy holding an A/B reveal (see below). The
@@ -319,14 +336,14 @@ does is count.
   sequence. The other two channels carry the read alone there, which they can, a
   landed swing flinches the enemy and moves `left:` and a whiff does neither.
 - **Learning survives the fight.** Weights and active adaptations are not cleared
-  by your death or by **FIGHT WON**. At `enemy_hp` 9 and threshold 3 the fastest
-  line, a counter plus a poke into the enemy's recovery, takes about two HP a
-  cycle and is the one that adapts `AFTER`. When it does, the enemy is at 3 HP,
-  so the adaptation bites inside the fight that taught it. Persistence still
-  matters, because per-fight learning would let a death wipe it. It is also the
-  rule the sequence already follows: dying does not re-sync the thing you are
-  being read on, so trading your life for a clean slate is not a move. **R**
-  clears both.
+  by your death or by **FIGHT WON**. At `enemy_hp` 9 and the shipped threshold of
+  `1`, a counter plus a poke into the enemy's recovery takes two HP on the first
+  cycle and adapts `AFTER` at that cycle's recovery exit. The enemy is at 7 HP
+  then, so the adaptation bites inside the fight that taught it. Persistence
+  still matters, because per-fight learning would let a death wipe it. It is
+  also the rule the sequence already follows: dying does not re-sync the thing
+  you are being read on, so trading your life for a clean slate is not a move.
+  **R** clears both.
 - **The HUD does not print what it learned.** It shows `adaptive_threshold`,
   `adaptive_capacity`, `adaptive_patience_guard_multiplier` and a bare
   `active: N/M` count. It never shows which buckets are adapted and it never
@@ -403,13 +420,16 @@ rules to act on. Rule 3 is the one that survives, and it survives unchanged.
   fight where the read is cleaner and therefore worth more.
 - **The second price is on the timing, not on the next attack.** Adaptive's
   reply to a swing is not another attack. Cancelling wind-ups is close to free
-  for exactly `adaptive_threshold` cycles **out of a cold `WINDUP` bucket**, and
-  for fewer out of a warm one. Learning is not cleared by your death or by FIGHT
-  WON, so a second fight can start warm and adapt sooner. A cancel buys 1.1 s of
-  recovery, then a 0.55 to 0.75 s guard beat, then a 1.2 s telegraph, so about
-  2.9 to 3.1 s of quiet against a 1.0 s lockout. Then the `WINDUP` bucket adapts
-  and the same press stops working. That line is the pure cancel, one HP a cycle
-  and nothing else, so at threshold 3 it stops with 6 of the enemy's 9 HP still
+  for exactly `adaptive_threshold` cycles **out of a cold `WINDUP` bucket**, which
+  at the shipped `1` is a single cancel. At a threshold of `2` or more a warm
+  bucket takes fewer. Learning is not cleared by your death or by FIGHT WON, so a
+  second fight can start with `WINDUP` already adapted, and then its first cancel
+  whiffs. A cancel buys 1.1 s of recovery, then a 0.55 to 0.75 s guard beat, then
+  a 1.2 s telegraph, so about 2.9 to 3.1 s of quiet against a 1.0 s lockout. At
+  the shipped threshold that cancel also adapts `WINDUP` at the recovery's exit,
+  so the 0.45 s stance shift runs before the guard beat and the quiet is about
+  3.3 to 3.5 s. Then the same press stops working. That line is the pure cancel,
+  one HP a cycle and nothing else, so it stops with 8 of the enemy's 9 HP still
   up. Findings item 3 recorded aggression as *strictly* dominant. Here it is
   dominant and then priced.
 
@@ -438,7 +458,7 @@ strings, plus one optional nineteenth (`seed`):
   "methodical_reset_time": 0.55,
   "methodical_resume": "next",
   "enemy_constraint": "adaptive",
-  "adaptive_threshold": 3,
+  "adaptive_threshold": 1,
   "adaptive_capacity": 2,
   "adaptive_patience_guard_multiplier": 0.5
 }
@@ -466,13 +486,16 @@ strings, plus one optional nineteenth (`seed`):
   1 (a 0-HP enemy would end the fight on the first frame you touched it). Shipped
   at `9`. Phase 3 raised it from `3` to `6`, because a fight has to outlast one
   full pass of the sequence or there is nothing to learn inside it. Phase 4
-  raised it from `6` to `9`, because counter-then-J takes two HP a cycle at the
-  shipped damage and `9` is the smallest value where that line needs
-  `adaptive_threshold + 2` cycles to kill by damage alone. At `6` it killed in
-  the same recovery whose exit formed the `AFTER` adaptation, so the fight that
-  taught it never played a cycle against it. At `9` the enemy is at 3 HP when
-  `AFTER` adapts. The HP is not derived from the threshold: change
-  `adaptive_threshold` and `enemy_hp` stays where it is.
+  raised it from `6` to `9` against the then-shipped `adaptive_threshold` of
+  `3`, because counter-then-J takes two HP a cycle at the shipped damage and `9`
+  is the smallest value where that line needs `adaptive_threshold + 2` cycles,
+  five at that threshold, to kill by damage alone. At `6` it killed in the same
+  recovery whose exit formed the `AFTER` adaptation, so the fight that taught it
+  never played a cycle against it. At `9` and threshold `3` the enemy was at
+  3 HP when `AFTER` adapted. At the shipped threshold of `1` it is at 7 HP, at
+  cycle one's recovery exit. The HP is not derived from the threshold: change
+  `adaptive_threshold` and `enemy_hp` stays where it is, which is why it stayed
+  at `9` when the threshold moved to `1`.
 - `counter_damage` - integer `>= 0`, HP a successful counter takes off. Floored
   at `0`, not at `1`, because "this verb deals no damage" is a legitimate
   experiment: set it to `0` to get the old behaviour back, where countering only
@@ -520,15 +543,19 @@ strings, plus one optional nineteenth (`seed`):
   never start with a live adaptation on it. Under `"vengeful"` the build is
   Phase 3 exactly: no whiffs, no stance shift, no adaptive HUD lines.
 - `adaptive_threshold` - integer `>= 1`, the weight one signature has to reach
-  before the enemy adapts to it, default `3`. Because the count is a per-cycle
-  seen-set, `N` is `N` consecutive cycles out of a **cold** bucket. Out of a warm
-  one it is fewer, because the test is on the accumulated weight and decay only
-  takes a bucket to 40% a cycle: `k` consecutive cycles cross as soon as
+  before the enemy adapts to it, default `1`. Because the count is a per-cycle
+  seen-set, `N` is `N` consecutive cycles out of a **cold** bucket, so at `1` any
+  bucket you use adapts at that cycle's recovery exit, and `PATIENCE` adapts
+  after a single cycle with no accepted swing. At `2` or more a warm bucket takes
+  fewer, because the test is on the accumulated weight and decay only takes a
+  bucket to 40% a cycle: `k` consecutive cycles cross as soon as
   `k >= N - 0.4 * w`. So a duty cycle fatter than one-in-*p* is caught as well,
-  by design. What is *never* caught is a strict rotation: alternating two buckets
-  tops out at `1.67` and rotating three at `1.19`, permanently. Floored at `1`,
-  which adapts off a single cycle. That is degenerate for play but the fastest
-  way to check that the whiff and the stance shift read at all.
+  by design. At those thresholds a strict rotation is *never* caught: alternating
+  two buckets tops out at `1.67` and rotating three at `1.19`, permanently. At
+  `1` the ceilings protect nothing, and what a rotation has to beat is
+  `adaptive_capacity`: it lands every swing only if its period is at least
+  `adaptive_capacity + 1`. Floored at `1`. Findings item 8 records the playtest
+  at this value.
 - `adaptive_capacity` - integer `>= 1`, how many adaptations can be live at once,
   default `2`. A new one evicts the oldest and zeroes its weight, so the evicted
   bucket becomes safe again and has to be re-earned from zero. At `1` the enemy
@@ -568,7 +595,7 @@ It shows `methodical_reset_time` and `methodical_resume` but **never**
 `methodical_sequence`, the position in it, or the next attack, and never which
 signatures are adapted or any weight. Missing file or a
 bad/missing key falls back to sane defaults (1.2 / 0.35 / 8.0 / 1.0 / 1.0 / 9 /
-1 / 1 / 1.0 / 2.5 / 0.6 / "AABAB" / 0.55 / "next" / "adaptive" / 3 / 2 / 0.5,
+1 / 1 / 1.0 / 2.5 / 0.6 / "AABAB" / 0.55 / "next" / "adaptive" / 1 / 2 / 0.5,
 seed random) and keeps running.
 
 One caveat for a play session, and it now covers two learned things rather than
@@ -705,8 +732,8 @@ enough to see `"AABAB"` come around twice.
 This is the question Phase 4 exists to answer, and Adaptive is the only trait
 that can answer it. Set `enemy_constraint` to `"adaptive"`, press **R**, and play
 several fights without reading the signature table above first. The mechanism is
-meant to be inferable from play: you swing somewhere, it keeps working, then it
-stops working, and the enemy lifts off the floor on the cycle it stops.
+meant to be inferable from play: you swing somewhere, it works once, then it
+stops working, and the enemy lifts off the floor just before it stops.
 
 Judge by hand:
 
@@ -714,14 +741,17 @@ Judge by hand:
    learned the old one?** Not because you are afraid of the wind-up, that was
    Phase 2, and not to hold your place in the sequence, that was Phase 3. Because
    the place you had been swinging stopped paying and you went looking for
-   another one. From cold memory at nine HP, counter-then-J has the enemy at 3 HP
-   when `AFTER` activates at cycle three's recovery exit, so the next post-counter
-   J whiffs with fight left. Keep the habit and the fight ends on cycle six;
-   switch to a guard-beat swing plus the counter and it ends on cycle five. Keep
-   the threshold at `3` and capacity at `2`. For a longer diagnostic replay,
-   temporarily set `enemy_hp` to `12` and press **R** once, then keep using
-   counter-then-hit until the enemy gives you a reason to change timing. Restore
-   HP to `9` afterwards.
+   another one. From cold memory at nine HP, counter-then-J has the enemy at 7 HP
+   when `AFTER` activates at cycle one's recovery exit, so the next post-counter
+   J whiffs with fight left. Keep the habit and only the counters land, so the
+   fight ends on cycle eight. Switch to a guard-beat swing plus the counter and
+   that swing lands once before `GUARD` adapts too, so it ends on cycle seven.
+   Rotating through all three press buckets from cycle two (a guard-beat swing
+   plus the counter, then a wind-up cancel, then counter-then-J) ends it on cycle
+   five. Keep the threshold at `1` and capacity at `2`. For a longer diagnostic
+   replay, temporarily set `enemy_hp` to `12` and press **R** once, then keep
+   using counter-then-hit until the enemy gives you a reason to change timing.
+   Restore HP to `9` afterwards.
    This extends observation time, not normal combat balance. During recovery,
    watch the HP `left:` count and flinch because the A/B result owns the label.
 2. **Can you tell *what* it learned, without being told?** You should be able to
@@ -734,7 +764,7 @@ Judge by hand:
    is wrong rather than the timing.
 4. **Is pure patience still playable?** Counter-only is the dominant line in the
    findings so far, and `PATIENCE` is the answer to it. Play a fight without
-   pressing **J** once, then confirm the loop visibly speeds up after the third
+   pressing **J** once, then confirm the loop visibly speeds up after the first
    cycle, and that the compressed beat is *still legible as a beat* at `0.28` s.
    If it reads as a flicker, raise `adaptive_patience_guard_multiplier`. That is
    what the knob is for.
@@ -743,12 +773,14 @@ Judge by hand:
    one. It should land again. The intended feel is that you bought that bucket
    back by changing twice, not that the enemy forgot.
 
-The honest failure mode: if rotating your swing between two buckets keeps every
-swing landing forever with no thought behind it, Adaptive is not a constraint and
-the decision does not exist. Rotation beating the counting rule is by design, not
-a bug, so the thing to measure is whether rotating is something you have to
-notice and choose, or something your hands were already doing before the enemy
-learned anything.
+The honest failure mode: if rotating your swing keeps every swing landing forever
+with no thought behind it, Adaptive is not a constraint and the decision does not
+exist. At the shipped threshold two buckets are not enough for that, since
+alternation whiffs on the third swing. A rotation has to run through three, with
+a wind-up cancel or a cycle with no swing as the third. Rotation beating the
+counting rule is by design, not a bug, so the thing to measure is whether
+rotating is something you have to notice and choose, or something your hands
+were already doing before the enemy learned anything.
 
 Every other constant (idle jitter, strike speed, recovery time, the guard-beat
 roll and damping, the vengeful pose length and shake, the adaptive decay rate and
@@ -756,16 +788,21 @@ the lift of the stance shift, colors, camera angle) is hardcoded in `main.gd`, o
 purpose. The decay is `0.4` rather than `0.5` deliberately: at `0.5` the
 alternation ceiling is exactly `2.0`, which a threshold of `2` would reach by
 float accumulation after about 53 cycles, so `0.4` is what keeps
-`adaptive_threshold` honest across its whole range.
+`adaptive_threshold` honest across its whole range. At the shipped threshold of
+`1` the decay has no effect on when anything adapts: a bucket you use reaches
+`1.0` that cycle, and a bucket that is not adapted sits at exactly `0`. It
+matters again from a threshold of `2` up.
 
 ## Verification
 
 The earlier no-Godot handoff is historical. Adaptive has now run locally, and
 the player reported "used counter then hit until it died" without changing
-timing because of learning. That run did not pass the behavioral gate. The
-source-confirmed terminal-input repair and deterministic Godot 4.7 results are
-recorded in findings item 7. Automated checks establish mechanics, not whether
-the player notices the response or chooses a new timing.
+timing because of learning. That run did not pass the behavioral gate. A later
+session at threshold `1`, the value that now ships, did pass it, for one player
+in one session (findings item 8). The source-confirmed terminal-input repair
+and deterministic Godot 4.7 results are recorded in findings item 7. Automated
+checks establish mechanics, not whether the player notices the response or
+chooses a new timing.
 
 Run the arithmetic assertions and combat regressions with the installed Godot
 4.7 executable:
@@ -776,8 +813,10 @@ Run the arithmetic assertions and combat regressions with the installed Godot
 
 For the longer diagnostic only, temporarily set `enemy_hp` to `12` in
 `tuning.json` and append `-- --diagnostic` to that command. Restore `9` after
-the run. All other shipped tuning stays unchanged. Visual and behavioral checks
-still need the player in the editor:
+the run. All other shipped tuning stays unchanged. The diagnostic checks that
+the shipped threshold of `1` loaded, then runs its trace at a threshold of `3`
+set inside the test. Visual and behavioral checks still need the player in the
+editor:
 
 Phase 4 (Adaptive), the four that matter most:
 
@@ -799,9 +838,12 @@ Phase 4 (Adaptive), the four that matter most:
   monitor and not one the words are carrying alone.
 - **Varying your timing actually flushes an adaptation.** With two live, build a
   third in a fresh bucket and confirm the oldest one stops whiffing, so the
-  bucket you were evicted out of is safe to use again. Then confirm the reverse:
-  alternate two buckets for a dozen cycles or more and confirm **no** adaptation
-  ever forms at all.
+  bucket you were evicted out of is safe to use again. Then check what the
+  shipped threshold of `1` does to rotation, from cold memory each time. Press
+  **R**, rotate strictly through all three press buckets (a guard-beat swing
+  plus the counter, a wind-up cancel, then counter-then-J) for a dozen cycles or
+  more, and confirm every swing lands. Press **R** again, alternate two of those
+  buckets, and confirm the third swing whiffs.
 - **Pure patience is no longer free.** Counter only, for `adaptive_threshold`
   cycles, watch for the shift, and confirm the guard beat visibly shortens and
   the loop speeds up. The risk on this one is the other direction: confirm the

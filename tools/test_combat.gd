@@ -67,11 +67,13 @@ func _test_default_counter_hit() -> void:
 	_fresh()
 	_check(game.enemy_constraint == "adaptive", "loaded tuning enables Adaptive")
 	_check(game.sequence == [0, 0, 1, 0, 1] and game.methodical_resume == "next", "loaded Methodical AABAB / next")
-	_check(game.adaptive_capacity == 2 and game.adaptive_threshold == 3, "shipped capacity and threshold")
+	_check(game.adaptive_capacity == 2 and game.adaptive_threshold == 1, "shipped capacity and threshold")
 	_check(game.enemy_hp == 9 and game.counter_damage == 1 and game.attack_damage == 1, "normal HP and damage unchanged")
 	# This scenario needs the third counter-then-J to kill before AFTER activates, which the shipped HP no longer does.
 	game.enemy_hp = 6
 	game.enemy_hp_left = 6
+	# It also needs J to land on three cycles before AFTER activates, which the shipped threshold 1 does not allow.
+	game.adaptive_threshold = 3
 	var attacks: Array[int] = []
 	for cycle in range(3):
 		_windup()
@@ -174,6 +176,8 @@ func _test_sampling_and_rejection() -> void:
 
 func _test_memory_and_reset() -> void:
 	_fresh()
+	# At threshold 1 the J into recovery below, counted at the boundary after the death, would adapt AFTER and evict GUARD, failing "death preserves active memory".
+	game.adaptive_threshold = 3
 	# Exercise the production boundary, including replacement. Arithmetic-only rotation
 	# and multi-eviction assertions also run in the existing _selftest_adaptive on _ready.
 	for bucket in [B.AFTER, B.GUARD, B.WINDUP]:
@@ -259,7 +263,9 @@ func _test_counter_windows_and_vengeful() -> void:
 func _diagnostic() -> void:
 	_fresh()
 	_check(game.enemy_hp == 12, "diagnostic must load temporary enemy_hp 12 from tuning.json")
-	_check(game.enemy_constraint == "adaptive" and game.adaptive_threshold == 3 and game.adaptive_capacity == 2, "diagnostic isolates Adaptive at default learning settings")
+	_check(game.enemy_constraint == "adaptive" and game.adaptive_threshold == 1 and game.adaptive_capacity == 2, "diagnostic isolates Adaptive at default learning settings")
+	# Its trace of three landed J and then whiffs depends on threshold 3, so it runs there.
+	game.adaptive_threshold = 3
 	var attacks: Array[int] = []
 	for cycle in range(6):
 		_windup()

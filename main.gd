@@ -34,7 +34,7 @@ var vengeful_telegraph_multiplier: float = 0.6   # telegraph scale while vengefu
 var methodical_reset_time: float = 0.55    # length of the guard beat that precedes every sequence attack
 var methodical_resume: String = "next"     # where the sequence picks up after a retaliation: "next" | "restart"
 var enemy_constraint: String = "adaptive"  # which constraint this enemy carries: "adaptive" | "vengeful". Never both.
-var adaptive_threshold: int = 3            # weight one signature must reach before it adapts; = that many consecutive cycles out of a cold bucket, see _close_cycle
+var adaptive_threshold: int = 1            # weight one signature must reach before it adapts; = that many consecutive cycles out of a cold bucket, see _close_cycle
 var adaptive_capacity: int = 2             # how many adaptations can be live at once; a new one evicts the oldest
 var adaptive_patience_guard_multiplier: float = 0.5   # guard-beat length while PATIENCE is adapted; 1.0 = no punishment
 const SEQUENCE_DEFAULT := "AABAB"          # parsed when the key is missing, or when it parses to nothing
@@ -559,8 +559,8 @@ func _reset_fight() -> void:
 	# Every path that restores HP goes through here, so the rage window can't survive a
 	# reset and hand the player a shortened telegraph on the first cycle of a fresh fight.
 	# Adaptive's weights and active list are DELIBERATELY not touched: learning survives a
-	# death and a FIGHT WON. At enemy_hp 9 and threshold 3 the counter-plus-recovery-poke line
-	# takes two HP a cycle and has the enemy at 3 HP when AFTER adapts, so the adaptation
+	# death and a FIGHT WON. At enemy_hp 9 and threshold 1 the counter-plus-recovery-poke line
+	# adapts AFTER at cycle 1's recovery exit with the enemy at 7 HP, so the adaptation
 	# bites inside the fight that taught it. Persistence still matters: clearing it here
 	# would make dying buy a clean slate. Same rule the sequence already follows: dying does
 	# not re-sync what you are being read on.
@@ -663,10 +663,11 @@ func _step_weights(weights: Array[float], seen: Array[bool]) -> void:
 
 
 func _evict_over_capacity(weights: Array[float], active: Array[int], cap: int) -> void:
-	# A new adaptation evicts the OLDEST, and zeroes that bucket's weight so it cannot
-	# immediately re-cross on the next press there. An active adaptation never expires on its
-	# own: decay alone does not flush it, only a newer one evicting it does. That asymmetry is
-	# the whole reason varying your timing beats Adaptive while no single habit does.
+	# A new adaptation evicts the OLDEST, and zeroes that bucket's weight so it has to be
+	# re-earned from zero and cannot re-cross without being used again. An active adaptation
+	# never expires on its own: decay alone does not flush it, only a newer one evicting it
+	# does. That asymmetry is the whole reason varying your timing beats Adaptive while no
+	# single habit does.
 	# A `while`, not an `if`: three buckets can cross in one cycle, since up to three presses
 	# fit in a ~3 s cycle at a 1 s lockout.
 	while active.size() > cap:
@@ -727,7 +728,8 @@ func _selftest_adaptive() -> void:
 		assert(not ps[Signature.PATIENCE], "one accepted swing anywhere must clear PATIENCE")
 
 	# p = 2, strict alternation: ceiling 1 / (1 - 0.4) = 1.67, so it never reaches a threshold
-	# of 2, let alone the shipped 3. 40 cycles is far past convergence. Ends on WINDUP.
+	# of 2 or more. It is no protection at the shipped 1, which one use of a bucket already
+	# reaches. 40 cycles is far past convergence. Ends on WINDUP.
 	var alt: Array[float] = [0.0, 0.0, 0.0, 0.0]
 	for i in range(40):
 		var b: int = Signature.GUARD if i % 2 == 0 else Signature.WINDUP
@@ -791,7 +793,7 @@ func _load_tuning() -> void:
 	methodical_reset_time = 0.55
 	methodical_resume = "next"
 	enemy_constraint = "adaptive"
-	adaptive_threshold = 3
+	adaptive_threshold = 1
 	adaptive_capacity = 2
 	adaptive_patience_guard_multiplier = 0.5
 	sequence = _parse_sequence(SEQUENCE_DEFAULT)
@@ -829,8 +831,8 @@ func _load_tuning() -> void:
 	# Same gate shape: only the exact non-default string opts out, so a typo, a number or a
 	# missing key lands on "adaptive". The two constraints never run together.
 	enemy_constraint = "vengeful" if _str(data, "enemy_constraint", enemy_constraint) == "vengeful" else "adaptive"
-	# floored at 1: threshold 1 adapts off a single cycle, which is a degenerate setting but a
-	# legitimate one for checking that the whiff and the stance shift read at all.
+	# floored at 1, the shipped value, which adapts off a single cycle. Anything lower would
+	# adapt every bucket not already active on every boundary, used or not: no weight is negative.
 	adaptive_threshold = maxi(1, int(_num(data, "adaptive_threshold", float(adaptive_threshold))))
 	# floored at 1, not 0: a capacity of 0 would evict every adaptation on the boundary that
 	# formed it, so the trait would be a no-op with a stance shift on top of it.
