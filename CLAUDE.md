@@ -74,6 +74,13 @@ These are what the experiments measure. Breaking one invalidates a phase even if
 - GDScript is tab-indented. `.gitattributes` forces LF line endings.
 - `agents/` holds identical copies of `.claude/agents/maker.md` and `checker.md` for Codex, which reads `AGENTS.md`. If you edit an agent definition, update both copies.
 
+## Project subagents
+
+These support the maker-checker loop below. They don't replace any step of it.
+- `godot-test-runner`: run after the Maker. The Checker can't run commands, so this keeps test results from coming only from the agent that wrote the code.
+- `tuning-sync`: run when a change touches a tuning key, a default, a clamp, or a number the README quotes.
+- `design-guard`: run alongside the Checker when `main.gd` changes touch the HUD, labels, posing, audio, the state machine, input, or Adaptive.
+
 ## Development Workflow — Maker-Checker
 
 
